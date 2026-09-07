@@ -82,6 +82,60 @@ planning artifacts**. This project is built with Claude Code, so that clause bin
 
 ---
 
+## The `quorum` scheme — what it binds to
+
+**Decided 2026-09-07. Do not re-open it mid-build.**
+
+`quorum` defines coordination over **N payers** — a threshold, a deadline, and a collective
+capture-or-release — and is deliberately **orthogonal to how any individual hold is
+implemented**. Three candidate bindings are named; exactly one is built.
+
+| Binding | In this project | Upstream status |
+|---|---|---|
+| **`exact` + pool contract, on Hedera** | ✅ **Implemented and demonstrated** | Merged; 17 network bindings |
+| **`auth-capture`** | One honest paragraph. **Not built** | Merged; **EVM-only** |
+| **`escrow`** ([x402#2222](https://github.com/x402-foundation/x402/issues/2222)) | One honest paragraph. **Not built** | **Proposed, still open** |
+
+`auth-capture` was not composed over directly because it has **no Hedera binding** — only an
+EVM one — and the facilitator this project settles through does not serve it. That is a
+feasibility decision, not a judgement on the design.
+
+**Why both unbuilt bindings are named.** `auth-capture` and `escrow` are competing answers to
+the same question: whether the hold mechanism belongs in the scheme, or behind a wire format
+that leaves it implementation-defined. If `quorum` binds cleanly to both, it is orthogonal to
+the axis the ecosystem is currently arguing about — it survives either outcome. One binding
+alone would only be an illustration.
+
+⚠️ **Hold the count at three.** Two unbuilt bindings is the argument; four would read as
+having built none of them. Write a short, honest paragraph for each unbuilt binding — how
+`quorum` would bind, and what is unproven. **Do not write a full binding spec for either.**
+
+### 🔴 Required disclosure
+
+**x402 issue #2222 (`scheme: "escrow"`) was authored by this project's author, on behalf of
+Boson Protocol, and remains open.** It is public and attributable to the same GitHub account
+that authors the commits here.
+
+Wherever #2222 is cited — in `specs/`, in the README, in the video if it comes up — **state
+that plainly, in one factual sentence.** For example:
+
+> *`escrow` (x402-foundation/x402#2222) is a proposal authored by this project's author on
+> behalf of Boson Protocol, and remains open. It is cited here as one of two candidate hold
+> bindings, not as settled standard.*
+
+Undisclosed, it is one click from discovery and reads as self-promotion dressed as neutral
+analysis. Disclosed, it is a credential. There is no version of this where hiding it wins.
+
+### ⚠️ Cite, never import
+
+#2222 dates from 2026-05-07, and `bosonprotocol/x402-escrow-schema` and `bosonprotocol/x402B`
+are pre-existing work. **Referencing a published public proposal is fine. Copying spec text or
+contract code out of those repositories into this one is not** — it would be exactly the
+prior-work import the Classic track prohibits. Read them if useful; write everything here
+fresh.
+
+---
+
 ## The README is how the project gets verified
 
 Judges verify asynchronously by reading the README. It must, before submission:
