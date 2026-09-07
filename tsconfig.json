@@ -3,8 +3,12 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022"],
-    "types": ["node"],
+    "lib": [
+      "ES2022"
+    ],
+    "types": [
+      "node"
+    ],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "esModuleInterop": true,
@@ -12,5 +16,10 @@
     "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
+  "include": [
+    "hardhat.config.ts",
+    "src/**/*.ts",
+    "scripts/**/*.ts",
+    "test/**/*.ts"
+  ]
 }
