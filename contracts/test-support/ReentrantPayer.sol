@@ -31,6 +31,9 @@ contract ReentrantPayer {
         return IRefundable(pools).claimRefund(poolId);
     }
 
+    // A receive() this involved is normally a defect. Here it is the whole fixture: the
+    // re-entry has to happen from inside the payout for the test to mean anything.
+    // solhint-disable-next-line no-complex-fallback
     receive() external payable {
         if (_inside || pools == address(0)) return;
         _inside = true;
@@ -40,6 +43,7 @@ contract ReentrantPayer {
         // transaction that failed for the wrong reason.
         try IRefundable(pools).claimRefund(poolId) returns (uint256) {
             reentryPaid = true;
+        // solhint-disable-next-line no-empty-blocks
         } catch {}
         _inside = false;
     }
