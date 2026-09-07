@@ -103,3 +103,13 @@ export async function poolFixture(options: PoolOptions = {}) {
 export function txId(n: number): string {
   return `0.0.${1000 + n}@178879${String(1000 + n).padStart(4, "0")}.000000000`;
 }
+
+export type PoolFixture = Awaited<ReturnType<typeof poolFixture>>;
+
+/** Settle and record `count` payments from distinct buyers, the way a filling pool does. */
+export async function takeSeats(fixture: PoolFixture, count: number, from = 0): Promise<void> {
+  for (let i = from; i < from + count; i++) {
+    await fixture.settle(fixture.unit);
+    await fixture.asCoordinator.write.recordDeposit([0n, fixture.buyer(i), fixture.unit, txId(i)]);
+  }
+}

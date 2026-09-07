@@ -91,6 +91,9 @@ contract QuorumPools {
     /// Tinybars this contract owes to a payer or a recipient. Never derived from `balance`.
     uint256 private _totalCommitted;
 
+    /// Owed to someone whose push transfer failed. The escape hatch, not a routine path.
+    mapping(address => uint256) private _credit;
+
     event PoolCreated(
         uint256 indexed poolId,
         address indexed coordinator,
@@ -121,6 +124,19 @@ contract QuorumPools {
 
     event ThresholdMet(uint256 indexed poolId, uint32 seats, uint64 at);
 
+    event PoolExpired(uint256 indexed poolId, uint64 at);
+
+    event Released(uint256 indexed poolId, address indexed recipient, uint64 tinybars);
+
+    /**
+     * @dev A state transition happened and the HBAR did not move with it. Always paired with
+     *      the transition's own event - `Released` or `Refunded` - which is what a subgraph
+     *      reads to track state. This one says the money is now sitting in `credit`.
+     */
+    event PayoutFailed(uint256 indexed poolId, address indexed to, uint64 tinybars);
+
+    event Withdrawn(address indexed to, uint64 tinybars);
+
     error BadThreshold();
     error BadUnitAmount();
     error DeadlineInPast();
@@ -130,6 +146,10 @@ contract QuorumPools {
     error NotCoordinator(address caller, address coordinator);
     error DuplicateTransaction(string hederaTxId);
     error Insolvent(uint256 wouldCommit, uint256 availableTinybars);
+    error NotMet(uint256 poolId, State state);
+    error NotDue(uint256 poolId, State state);
+    error NoCredit();
+    error PayoutRejected(address to, uint256 tinybars);
 
     /**
      * @notice Open a pool. Anyone may; the caller gains no authority by doing so.
@@ -229,6 +249,66 @@ contract QuorumPools {
         }
     }
 
+    /**
+     * @notice Record that a pool's deadline passed without its threshold being reached.
+     * @dev    Permissionless, because it decides nothing: it writes down a fact the clock had
+     *         already settled, and `statusOf` reports that fact whether or not anyone has
+     *         called this. Optional, too - the refund paths stamp it themselves.
+     *
+     *         Idempotent once stamped. It reverts on a pool that is not due, which includes a
+     *         met pool at any time: quorum was reached, and no clock un-reaches it.
+     */
+    function expire(uint256 poolId) external {
+        Pool storage pool = _pool(poolId);
+        State state = _effectiveState(pool);
+        if (state != State.Expired) revert NotDue(poolId, state);
+        _stampExpired(pool, poolId);
+    }
+
+    /**
+     * @notice Pay a met pool's counted total to the recipient it named at creation.
+     * @dev    Permissionless, and for the same reason `expire` is: it chooses nothing. The
+     *         recipient and the amount were both fixed when the pool was created, and the
+     *         only thing that unlocks this is the threshold having been reached. Gating it
+     *         would add someone who can stall the outcome without adding anyone who can
+     *         change it.
+     *
+     *         Late deposits are not paid out. Only seats are, at the unit price - the rest of
+     *         the pool's balance is still owed to the payers who sent it.
+     */
+    function release(uint256 poolId) external {
+        Pool storage pool = _pool(poolId);
+        State state = _effectiveState(pool);
+        if (state != State.Met) revert NotMet(poolId, state);
+
+        address recipient = pool.recipient;
+        // Bounded by the solvency invariant: this cannot exceed `_totalCommitted`, which is
+        // itself bounded by the contract's balance, so it fits `uint64` for any real amount.
+        uint256 amount = uint256(pool.seats) * uint256(pool.unitTinybars);
+
+        // Terminal before the transfer, so nothing that reenters can be paid twice.
+        pool.state = State.Released;
+        emit Released(poolId, recipient, uint64(amount));
+
+        if (!_payout(recipient, amount)) {
+            _credit[recipient] += amount;
+            emit PayoutFailed(poolId, recipient, uint64(amount));
+        }
+    }
+
+    /**
+     * @notice Pull whatever this contract owes you after a push transfer failed.
+     * @dev    The escape hatch. Nothing reaches `credit` on a path that worked.
+     */
+    function withdraw() external returns (uint256 tinybars) {
+        tinybars = _credit[msg.sender];
+        if (tinybars == 0) revert NoCredit();
+
+        _credit[msg.sender] = 0;
+        if (!_payout(msg.sender, tinybars)) revert PayoutRejected(msg.sender, tinybars);
+        emit Withdrawn(msg.sender, uint64(tinybars));
+    }
+
     /// @notice How many pools exist. Ids are `0 .. poolCount() - 1`.
     function poolCount() external view returns (uint256) {
         return _pools.length;
@@ -260,6 +340,11 @@ contract QuorumPools {
         _pool(poolId);
         if (depositId >= _deposits[poolId].length) revert NoSuchDeposit(poolId, depositId);
         return _deposits[poolId][depositId];
+    }
+
+    /// @notice Tinybars owed to one address whose push transfer failed. Claim with `withdraw`.
+    function creditOf(address who) external view returns (uint256) {
+        return _credit[who];
     }
 
     /// @notice Tinybars owed to payers and recipients. The left side of the solvency invariant.
@@ -306,5 +391,26 @@ contract QuorumPools {
     function _effectiveState(Pool storage pool) private view returns (State) {
         if (pool.state == State.Open && block.timestamp >= pool.deadline) return State.Expired;
         return pool.state;
+    }
+
+    /// @dev Writes the stamp if it is not already there. The caller has checked it is due.
+    function _stampExpired(Pool storage pool, uint256 poolId) private {
+        if (pool.state == State.Expired) return;
+        pool.state = State.Expired;
+        emit PoolExpired(poolId, uint64(block.timestamp));
+    }
+
+    /**
+     * @dev Send tinybars, converting to weibars at the boundary. One of the two places in this
+     *      contract where the two units meet; the solvency check is the other.
+     *
+     *      `call` rather than `transfer`, because the 2300-gas stipend is not a safe assumption
+     *      on Hedera. `_totalCommitted` falls only when the HBAR has actually left - a failed
+     *      send leaves the debt exactly where it was, because it is still owed.
+     */
+    function _payout(address to, uint256 tinybars) private returns (bool ok) {
+        if (tinybars == 0) return true;
+        (ok,) = payable(to).call{value: tinybars * TINYBAR_TO_WEIBAR}("");
+        if (ok) _totalCommitted -= tinybars;
     }
 }
