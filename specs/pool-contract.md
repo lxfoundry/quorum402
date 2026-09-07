@@ -64,18 +64,24 @@ function withdraw() external returns (uint256 tinybars);
 |---|---|---|---|
 | `createPool` | anyone | `threshold > 0`, `unitTinybars > 0`, `deadline > block.timestamp`, non-zero addresses | Allocates `poolId`; terms are immutable thereafter |
 | `recordDeposit` | **the pool's coordinator** | `msg.sender == pool.coordinator` | Attributes one settled payment. Never reverts for a buyer-side reason — [ADR 0004](adr/0004-deposits-that-cannot-be-refused.md) |
-| `expire` | anyone | deadline passed; idempotent | Stamps `Expired`, emits the event. **Optional** — the refund paths do it themselves |
+| `expire` | anyone | pool is `Open` **and** the deadline has passed; idempotent once `Expired` | Stamps `Expired`, emits the event. **Optional** — the refund paths do it themselves |
 | `release` | anyone | pool is `Met` | Pays `recipient` the counted total, marks `Released` |
 | `claimRefund` | **the payer** | has a refundable deposit | Expires the pool if due, then sweeps every refundable deposit the caller holds |
 | `refundAll` | anyone | bounded by `maxDeposits` | Expires the pool if due, then pushes refunds for up to `maxDeposits` deposits |
 | `withdraw` | anyone with credit | has credit | Escape hatch when a push transfer failed |
 
+**Due** means `state == Open && block.timestamp >= deadline`, and it is the only condition
+under which a pool becomes `Expired`. A pool that reached `Met` therefore never expires,
+whatever the clock says: `expire` reverts on it, and the *expires the pool if due* in
+`claimRefund` and `refundAll` does nothing. That is what stops a met pool's counted deposits
+from becoming refundable after quorum was already reached.
+
 Views: `statusOf`, `poolOf`, `depositCount`, `depositAt`, `committedTinybars`,
 `balanceTinybars`.
 
-> `statusOf` reports the **effective** status: a pool whose deadline has passed reads as
-> `Expired` even before anyone has stamped it. Stored state and effective status differ exactly
-> in that window, and every method that acts on state resolves it first.
+> `statusOf` reports the **effective** status: a pool that is still `Open` when its deadline
+> passes reads as `Expired` before anyone has stamped it. Stored state and effective status
+> differ exactly in that window, and every method that acts on state resolves it first.
 
 ### Why `release` and `expire` are permissionless
 
