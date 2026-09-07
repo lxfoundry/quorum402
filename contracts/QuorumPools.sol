@@ -153,6 +153,7 @@ contract QuorumPools {
     error NoCredit();
     error PayoutRejected(address to, uint256 tinybars);
     error NothingToRefund(uint256 poolId, address payer);
+    error ZeroAmount();
     error PoolTooLarge(uint256 totalTinybars);
 
     /**
@@ -208,9 +209,16 @@ contract QuorumPools {
      *         strand it (ADR 0004). A payment that cannot take a seat is recorded as a late
      *         deposit and becomes refundable at once.
      *
-     *         The three reverts left are all coordinator-side, and every one of them means the
-     *         call is describing something that did not happen: an unknown pool, a payment
-     *         already recorded, or money that is not in this contract.
+     *         The reverts left are all coordinator-side, and every one of them means the call
+     *         is describing something that did not happen: an unknown pool, a payment already
+     *         recorded, money that is not in this contract, or a payment of nothing.
+     *
+     *         That last one is not in tension with ADR 0004. Refusing a deposit is only
+     *         dangerous when HBAR has arrived and rejecting the record would strand it; zero
+     *         tinybars is the case where nothing arrived, so there is nothing to strand. A
+     *         zero-amount deposit is also the one kind its payer could never clear - a refund
+     *         of nothing leaves `claimRefund` with nothing to pay and it reverts - so it would
+     *         sit in the scan forever.
      * @return depositId Index of the deposit within the pool.
      * @return counted   Whether it took a seat.
      */
@@ -221,6 +229,7 @@ contract QuorumPools {
         Pool storage pool = _pool(poolId);
         if (msg.sender != pool.coordinator) revert NotCoordinator(msg.sender, pool.coordinator);
         if (payer == address(0)) revert ZeroAddress();
+        if (tinybars == 0) revert ZeroAmount();
 
         {
             bytes32 txKey = keccak256(bytes(hederaTxId));

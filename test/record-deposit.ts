@@ -42,6 +42,21 @@ describe("recordDeposit", () => {
     );
   });
 
+  it("refuses a payment of nothing, which no one could ever refund either", async () => {
+    const { pools, asCoordinator, buyer, settle } = await poolFixture();
+    await settle(UNIT);
+
+    // The HBAR is here, so this is not the solvency gate talking: a deposit of zero is
+    // refused because nothing arrived to be stranded by refusing it, and because its payer
+    // could never clear it - claimRefund would find nothing to pay and revert.
+    await viem.assertions.revertWithCustomError(
+      asCoordinator.write.recordDeposit([0n, buyer(0), 0n, txId(1)]),
+      pools,
+      "ZeroAmount",
+    );
+    assert.equal(await pools.read.depositCount([0n]), 0n);
+  });
+
   it("refuses a payment that has not arrived", async () => {
     const { pools, asCoordinator, buyer } = await poolFixture();
 
