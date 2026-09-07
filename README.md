@@ -60,7 +60,8 @@ Design decisions are recorded as they are made:
   destroy it
 
 The contract those decisions describe is specified in
-[specs/pool-contract.md](specs/pool-contract.md), written before the code.
+[specs/pool-contract.md](specs/pool-contract.md), written before the code, and implemented in
+[contracts/QuorumPools.sol](contracts/QuorumPools.sol).
 
 TODO — the `quorum` scheme spec itself, as the implementation lands.
 
@@ -101,6 +102,10 @@ TODO — video link.
 ## Repository layout
 
 ```
+contracts/    the pool contract that holds a pool's funds, and its test support
+src/          the x402 wire types and the Hedera `exact` payment path
+scripts/      preflight checks against Hedera testnet, run before the design relied on them
+test/         contract tests, run on a local EVM pinned to Hedera's target
 specs/        scheme spec, prompts and planning artifacts, written during the build
 AI-USAGE.md   where and how AI tooling was used, and what was done by hand
 .claude/      Claude Code skills used during development (see AI-USAGE.md)

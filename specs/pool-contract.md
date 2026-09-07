@@ -320,13 +320,21 @@ the party watching. All three are permissionless.
 
 Minutes each, and the first one can invalidate the design.
 
-1. 🔴 **Will the facilitator accept a `payTo` that is a contract, not an account?** If Blocky402
-   validates `payTo` as an account entity and rejects a contract id, then
-   [ADR 0002](adr/0002-payment-attribution-on-hedera.md)'s Option A does not work and the
-   attribution decision reopens. **Test this before anything else.**
-2. Does a native `CryptoTransfer` credit a contract account on testnet, with no receiver
-   signature and no code executed? Extend the preflight in [`scripts/check-env.ts`](../scripts/check-env.ts).
-3. Confirm the weibar conversion empirically with one throwaway payout, before the refund
-   arithmetic depends on it.
-4. Does subgraph indexing reach Hedera testnet contracts, and through whose graph-node? The
-   Graph integration rests on it.
+1. ✅ **Will the facilitator accept a `payTo` that is a contract, not an account?**
+   **Verified on testnet 2026-09-07.** `/verify` accepted it, `/settle` moved 0.1 HBAR into
+   contract `0.0.10407447` (`0.0.7162784@1788790885.988213434`), and the mirror node shows the
+   balance change. [ADR 0002](adr/0002-payment-attribution-on-hedera.md)'s Option A holds.
+   Re-runnable: [`scripts/check-contract-payto.ts`](../scripts/check-contract-payto.ts).
+2. ✅ **Does a native `CryptoTransfer` credit a contract account, with no receiver signature
+   and no code executed?** **Verified in the same settlement.** The mirror node records it as
+   `CRYPTOTRANSFER`/`SUCCESS`, and `/api/v1/contracts/results/<txId>` returns 404 — there is
+   no contract result, because no contract code ran. This is what
+   [ADR 0004](adr/0004-deposits-that-cannot-be-refused.md) rests on: there was no moment at
+   which the payment could have been rejected.
+3. ⬜ **Confirm the weibar conversion empirically with one throwaway payout.** *Still open, and
+   the refund arithmetic now depends on it.* The contract is written and tested against a local
+   EVM, where the `TINYBAR_TO_WEIBAR` factor is exercised but not *validated* — the tests would
+   pass just as well with the wrong constant, because they use the same one on both sides.
+   Only a real payout from a deployed contract settles this.
+4. ⬜ **Does subgraph indexing reach Hedera testnet contracts, and through whose graph-node?**
+   Still open. The Graph integration rests on it.
