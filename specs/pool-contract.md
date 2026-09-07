@@ -76,8 +76,9 @@ whatever the clock says: `expire` reverts on it, and the *expires the pool if du
 `claimRefund` and `refundAll` does nothing. That is what stops a met pool's counted deposits
 from becoming refundable after quorum was already reached.
 
-Views: `statusOf`, `poolOf`, `depositCount`, `depositAt`, `committedTinybars`,
-`balanceTinybars`.
+Views: `statusOf`, `poolOf`, `poolCount`, `depositCount`, `depositAt`, `committedTinybars`,
+`balanceTinybars`. Pool ids are allocated sequentially from zero, so `poolCount` is both the
+next id and the bound on every existing one.
 
 > `statusOf` reports the **effective** status: a pool that is still `Open` when its deadline
 > passes reads as `Expired` before anyone has stamped it. Stored state and effective status
@@ -223,7 +224,7 @@ Every state transition emits, so a subgraph reconstructs full pool state with no
 
 ```solidity
 event PoolCreated(uint256 indexed poolId, address indexed coordinator, address indexed recipient,
-                  uint256 unitTinybars, uint32 threshold, uint64 deadline, string resourceUrl);
+                  uint64 unitTinybars, uint32 threshold, uint64 deadline, string resourceUrl);
 event DepositRecorded(uint256 indexed poolId, address indexed payer, uint256 depositId,
                       uint64 tinybars, string hederaTxId, uint32 seatsAfter);
 event LateDeposit(uint256 indexed poolId, address indexed payer, uint256 depositId,
