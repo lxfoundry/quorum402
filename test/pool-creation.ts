@@ -8,13 +8,15 @@ const RESOURCE = "https://quorum402.example/resource/1";
 async function deploy() {
   const pools = await viem.deployContract("QuorumPools");
   const [offerer, coordinator, recipient] = await viem.getWalletClients();
-  const deadline = (await time.latest()) + Number(HOUR);
+  // Kept in bigint from the first arithmetic, as every other test file does. Widening at the
+  // end instead would break the day `time.latest()` returns a bigint of its own.
+  const deadline = BigInt(await time.latest()) + HOUR;
   return {
     pools,
     offerer: offerer!.account.address,
     coordinator: coordinator!.account.address,
     recipient: recipient!.account.address,
-    deadline: BigInt(deadline),
+    deadline,
   };
 }
 
