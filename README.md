@@ -52,6 +52,15 @@ Design decisions are recorded as they are made:
 - [ADR 0002 — Payment attribution on Hedera](specs/adr/0002-payment-attribution-on-hedera.md)
   — why a native Hedera transfer cannot carry a pool join, the options weighed, and the trust
   boundary this design accepts
+- [ADR 0003 — Who may do what to a pool](specs/adr/0003-pool-authority-model.md) — why the
+  contract is ownerless, why each pool names its own coordinator, and the solvency invariant
+  that stops a threshold being crossed without real funds
+- [ADR 0004 — Deposits that cannot be refused](specs/adr/0004-deposits-that-cannot-be-refused.md)
+  — why the money moves before the contract hears about it, and why rejecting a payment would
+  destroy it
+
+The contract those decisions describe is specified in
+[specs/pool-contract.md](specs/pool-contract.md), written before the code.
 
 TODO — the `quorum` scheme spec itself, as the implementation lands.
 
