@@ -361,9 +361,13 @@ Minutes each, and the first one can invalidate the design.
    [ADR 0004](adr/0004-deposits-that-cannot-be-refused.md) rests on: there was no moment at
    which the payment could have been rejected.
 3. ⬜ **Confirm the weibar conversion empirically with one throwaway payout.** *Still open, and
-   the refund arithmetic now depends on it.* The contract is written and tested against a local
-   EVM, where the `TINYBAR_TO_WEIBAR` factor is exercised but not *validated* — the tests would
-   pass just as well with the wrong constant, because they use the same one on both sides.
-   Only a real payout from a deployed contract settles this.
+   the refund arithmetic depends on it — but on a narrower question than this item first
+   claimed.* The tests define their own `TINYBAR_TO_WEIBAR` in `test/helpers.ts`, independent of
+   the contract's, and assertions that compare a contract-reported tinybar figure against a
+   test-computed weibar one do pin the two together. So the suite *does* catch a wrong constant
+   in the contract. What it cannot catch is both being wrong the same way — that `1 tinybar =
+   1e10 weibar` is Hedera's real ratio and not merely ours. That is documented rather than
+   guessed (1 HBAR = 1e8 tinybar = 1e18 weibar), and one real payout from a deployed contract
+   converts it from documented to observed.
 4. ⬜ **Does subgraph indexing reach Hedera testnet contracts, and through whose graph-node?**
    Still open. The Graph integration rests on it.

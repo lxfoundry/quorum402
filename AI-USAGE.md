@@ -80,3 +80,41 @@ declared `unitTinybars` as `uint256` while storage and every other event used `u
 nothing could enumerate them without it. Both were written by AI and reviewed by a human, and
 neither was caught until the contract was built against them. Writing the spec first is still
 worth it; believing a spec is correct because it is written down is not.
+
+**2026-09-07 — the spec claimed an authority the code did not have.** The Actors table said a
+coordinator "cannot refund to itself". It can: record a deposit naming yourself as payer for
+an amount that is not the unit price, and it is late on arrival, refundable at once, and
+yours to claim. The underlying integrity claim survives — the solvency gate bounds it to
+unattributed HBAR — and ADR 0003 had already described the race in full. Only the one-line
+summary overstated it, which is the dangerous place for an overstatement: a reader can
+disprove it in one call, faster than they can find the ADR that qualifies it.
+
+**2026-09-07 — the spec undersold its own tests, and the undersell was also AI-written.**
+Preflight item 3 said the local tests "would pass just as well with the wrong constant,
+because they use the same one on both sides". They would not. `test/helpers.ts` defines
+`TINYBAR_TO_WEIBAR` independently of the contract's, and two assertions cross the two, so a
+wrong constant *in the contract* fails the suite. What the tests genuinely cannot check is
+whether Hedera's real ratio is 1e10. Both directions of this matter: a spec that overstates
+its guarantees misleads a reader, and one that understates its tests wastes the time of
+whoever reads it next deciding what to re-verify.
+
+## 6. Review, and what it caught
+
+The contract was reviewed by a second Claude Code session given only the diff, the spec and
+the ADRs — not the conversation that produced the code. It found no fund-safety defect: it
+traced the solvency invariant, the reentrancy ordering and the state machine independently
+and could not construct a double payment or a stranded pool.
+
+What it did find was the gap between what the code guaranteed and what the spec said it
+guaranteed, three times over — the coordinator claim and the test claim above, plus
+`refundAll`, which the spec called "bounded and resumable" while it was bounded in refunds
+made rather than gas spent, and so could be closed off entirely by a payer contract that
+burns the gas it is sent. It also found that the reentrancy test proved the weaker half of
+what its test double existed for: with one deposit, the reentrant claim always reverted
+`NothingToRefund`, so the storage re-read that actually prevents double payment was never
+exercised.
+
+The pattern across all four is worth naming. None was a bug in the sense of a wrong line;
+every one was a place where prose asserted a property the tests did not reach. That is the
+specific failure mode of building against a spec you also wrote — and the reason the review
+was given the spec and the ADRs rather than the session history.
