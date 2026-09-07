@@ -275,7 +275,7 @@ sequenceDiagram
         RS->>P: recordDeposit(poolId, payerEvm, unit, hederaTxId)
         Note over P: solvency, tx-id uniqueness,<br/>seat and deadline resolved here
         P-->>G: DepositRecorded — or LateDeposit
-        RS-->>B: 200 + receipt; resource withheld until quorum
+        RS-->>B: 200 + receipt — resource withheld until quorum
     end
 
     alt threshold reached before the deadline
