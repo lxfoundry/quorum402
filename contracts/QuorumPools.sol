@@ -153,6 +153,7 @@ contract QuorumPools {
     error NoCredit();
     error PayoutRejected(address to, uint256 tinybars);
     error NothingToRefund(uint256 poolId, address payer);
+    error PoolTooLarge(uint256 totalTinybars);
 
     /**
      * @notice Open a pool. Anyone may; the caller gains no authority by doing so.
@@ -171,6 +172,13 @@ contract QuorumPools {
         if (threshold == 0) revert BadThreshold();
         if (unitTinybars == 0) revert BadUnitAmount();
         if (deadline <= block.timestamp) revert DeadlineInPast();
+
+        // A full pool pays `threshold * unitTinybars`, and `release` emits that as a `uint64`.
+        // Refusing an unpayable pool here is what makes that cast safe, rather than an appeal
+        // to HBAR's total supply being small enough that no real pool could reach the ceiling.
+        // The supply argument happens to hold; it is not this contract's to enforce.
+        uint256 fullPool = uint256(threshold) * uint256(unitTinybars);
+        if (fullPool > type(uint64).max) revert PoolTooLarge(fullPool);
 
         poolId = _pools.length;
         _pools.push(
@@ -285,8 +293,8 @@ contract QuorumPools {
         if (state != State.Met) revert NotMet(poolId, state);
 
         address recipient = pool.recipient;
-        // Bounded by the solvency invariant: this cannot exceed `_totalCommitted`, which is
-        // itself bounded by the contract's balance, so it fits `uint64` for any real amount.
+        // `seats <= threshold`, and `createPool` refused any pool whose full total would not
+        // fit a `uint64`, so the casts below cannot truncate.
         uint256 amount = uint256(pool.seats) * uint256(pool.unitTinybars);
 
         // Terminal before the transfer, so nothing that reenters can be paid twice.

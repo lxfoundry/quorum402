@@ -97,6 +97,19 @@ describe("createPool", () => {
       );
     });
 
+    it("a full pool that would not fit the uint64 the payout event reports", async () => {
+      const { pools, coordinator, recipient, deadline } = await deploy();
+      const tooMuch = (2n ** 64n - 1n) / 2n + 1n; // x2 seats overflows uint64 by one
+
+      await viem.assertions.revertWithCustomError(
+        pools.write.createPool([recipient, coordinator, tooMuch, 2, deadline, RESOURCE]),
+        pools,
+        "PoolTooLarge",
+      );
+      // One seat short of the ceiling is fine - the gate is on the total, not the unit price.
+      await pools.write.createPool([recipient, coordinator, tooMuch, 1, deadline, RESOURCE]);
+    });
+
     it("a zero recipient, which would burn the proceeds", async () => {
       const { pools, coordinator, deadline } = await deploy();
       await viem.assertions.revertWithCustomError(
