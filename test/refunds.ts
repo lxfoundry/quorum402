@@ -195,7 +195,7 @@ describe("refundAll", () => {
     await takeSeats(fixture, 3);
     await time.increaseTo(deadline);
 
-    const tx = await pools.write.refundAll([0n, 10n]);
+    const tx = await pools.write.refundAll([0n, 0n, 10n]);
     await viem.assertions.balancesHaveChanged(tx, [
       { address: buyer(0), amount: weibars(unit) },
       { address: buyer(1), amount: weibars(unit) },
@@ -204,29 +204,88 @@ describe("refundAll", () => {
     assert.equal(await pools.read.committedTinybars(), 0n);
   });
 
-  it("stops at maxDeposits and resumes where the money still is", async () => {
+  it("refunds a window at a time, and resumes where the caller says", async () => {
     const fixture = await poolFixture({ threshold: 4 });
     const { pools, unit, deadline } = fixture;
     await takeSeats(fixture, 3);
     await time.increaseTo(deadline);
 
-    await pools.write.refundAll([0n, 2n]);
+    assert.equal((await pools.simulate.refundAll([0n, 0n, 2n])).result, 2n);
+    await pools.write.refundAll([0n, 0n, 2n]);
     assert.equal(await pools.read.committedTinybars(), unit);
     assert.equal((await pools.read.depositAt([0n, 2n])).refunded, false);
 
-    await pools.write.refundAll([0n, 2n]);
+    await pools.write.refundAll([0n, 2n, 2n]);
     assert.equal(await pools.read.committedTinybars(), 0n);
     assert.equal((await pools.read.depositAt([0n, 2n])).refunded, true);
   });
 
-  it("returns nothing to do rather than failing, so a driver loop can just stop", async () => {
+  it("bounds the deposits it looks at, not the refunds it makes", async () => {
+    const fixture = await poolFixture({ threshold: 4 });
+    const { pools, unit, deadline } = fixture;
+    await takeSeats(fixture, 3);
+    await time.increaseTo(deadline);
+
+    await pools.write.refundAll([0n, 0n, 2n]);
+
+    // The first window is now spent, and re-scanning it refunds nothing - but a third of the
+    // pool's money is still owed further down the list. This is why a driver advances
+    // startIndex rather than calling until the return value is zero: doing the latter would
+    // stop here and strand deposit 2.
+    assert.equal((await pools.simulate.refundAll([0n, 0n, 2n])).result, 0n);
+    assert.equal(await pools.read.committedTinybars(), unit);
+    assert.equal((await pools.simulate.refundAll([0n, 2n, 2n])).result, 1n);
+  });
+
+  it("returns zero past the end of the list rather than reverting", async () => {
     const fixture = await poolFixture({ threshold: 4 });
     await takeSeats(fixture, 2);
     await time.increaseTo(fixture.deadline);
-    await fixture.pools.write.refundAll([0n, 10n]);
 
-    assert.equal((await fixture.pools.simulate.refundAll([0n, 10n])).result, 0n);
-    await fixture.pools.write.refundAll([0n, 10n]); // and it does not revert
+    assert.equal((await fixture.pools.simulate.refundAll([0n, 99n, 10n])).result, 0n);
+    // A huge window is clamped to the list rather than overflowing the end index.
+    assert.equal((await fixture.pools.simulate.refundAll([0n, 0n, 2n ** 255n])).result, 2n);
+  });
+
+  it("lets a caller step over a payer who burns the gas it is sent", async () => {
+    const burner = await viem.deployContract("GasBurner");
+    const fixture = await poolFixture({ threshold: 5 });
+    const { pools, asCoordinator, buyer, settle, unit, deadline } = fixture;
+
+    // The griefer is first in the list, so every scan that must start at zero reaches it.
+    await settle(unit);
+    await asCoordinator.write.recordDeposit([0n, burner.address, unit, txId(90)]);
+    await takeSeats(fixture, 2);
+    await time.increaseTo(deadline);
+
+    // `_payout` forwards all remaining gas, so the burner takes 63/64 of the frame and the
+    // scan cannot afford the two refunds that follow it. This is the call that used to be the
+    // only one available.
+    const gas = 500_000n;
+    await assert.rejects(pools.write.refundAll([0n, 0n, 10n], { gas }));
+
+    // Starting past it, the same gas is plenty, and the honest buyers are paid.
+    const tx = await pools.write.refundAll([0n, 1n, 10n], { gas });
+    await viem.assertions.balancesHaveChanged(tx, [
+      { address: buyer(0), amount: weibars(unit) },
+      { address: buyer(1), amount: weibars(unit) },
+    ]);
+    assert.equal(await pools.read.committedTinybars(), unit); // the griefer's own, still stuck
+  });
+
+  it("is safe to re-run over ground it has already covered", async () => {
+    const fixture = await poolFixture({ threshold: 4 });
+    await takeSeats(fixture, 2);
+    await time.increaseTo(fixture.deadline);
+    await fixture.pools.write.refundAll([0n, 0n, 10n]);
+
+    // Here the window did cover the whole list, so zero really does mean done - but that is
+    // a fact about this window, not a stopping rule. What matters is that re-scanning costs
+    // a bounded walk and pays nothing twice, which is what lets any caller drive it without
+    // coordinating with any other.
+    assert.equal((await fixture.pools.simulate.refundAll([0n, 0n, 10n])).result, 0n);
+    await fixture.pools.write.refundAll([0n, 0n, 10n]); // and it does not revert
+    assert.equal(await fixture.pools.read.committedTinybars(), 0n);
   });
 
   it("keeps going past a payer who will not take the money", async () => {
@@ -239,7 +298,7 @@ describe("refundAll", () => {
     await takeSeats(fixture, 2);
     await time.increaseTo(deadline);
 
-    const tx = await pools.write.refundAll([0n, 10n]);
+    const tx = await pools.write.refundAll([0n, 0n, 10n]);
     await viem.assertions.emitWithArgs(tx, pools, "PayoutFailed", [0n, picky.address, unit]);
     await viem.assertions.balancesHaveChanged(tx, [
       { address: buyer(0), amount: weibars(unit) },
@@ -257,7 +316,7 @@ describe("refundAll", () => {
     await time.increaseTo(fixture.deadline);
 
     assert.equal((await fixture.pools.read.poolOf([0n])).state, State.Open);
-    const tx = await fixture.pools.write.refundAll([0n, 10n]);
+    const tx = await fixture.pools.write.refundAll([0n, 0n, 10n]);
     await viem.assertions.emit(tx, fixture.pools, "PoolExpired");
     assert.equal((await fixture.pools.read.poolOf([0n])).state, State.Expired);
   });
@@ -267,7 +326,7 @@ describe("refundAll", () => {
     await takeSeats(fixture, 2);
     await time.increaseTo(fixture.deadline + 1n);
 
-    assert.equal((await fixture.pools.simulate.refundAll([0n, 10n])).result, 0n);
+    assert.equal((await fixture.pools.simulate.refundAll([0n, 0n, 10n])).result, 0n);
     assert.equal(await fixture.pools.read.committedTinybars(), fixture.unit * 2n);
   });
 });

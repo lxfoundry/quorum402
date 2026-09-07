@@ -326,8 +326,10 @@ contract QuorumPools {
      *         monotonic in index - a late deposit is refundable the moment it is recorded,
      *         while a counted one only becomes refundable when the pool expires - so there is
      *         no prefix that can be skipped. The caller pays for that scan, and it is bounded
-     *         by the pool's own deposit count. `refundAll` is the bounded path for the case
-     *         where that is not good enough.
+     *         by the pool's own deposit count - which on a large enough pool is not a bound
+     *         worth having. `refundAll` takes a window for that reason; this one does not,
+     *         because the payer sweeping their own deposits has to reach all of them in one
+     *         call to know they are done, and a payer's deposits are few.
      * @return tinybars The total refunded to the caller.
      */
     function claimRefund(uint256 poolId) external returns (uint256 tinybars) {
@@ -348,26 +350,51 @@ contract QuorumPools {
     }
 
     /**
-     * @notice Push refunds out to payers, up to `maxDeposits` of them.
+     * @notice Push refunds out to the payers of deposits `startIndex` through
+     *         `startIndex + maxDeposits`.
      * @dev    Not a convenience. A buyer who spent their HBAR paying may not be able to afford
      *         the gas to claim it back, so this is the path that actually runs at a failed
      *         deadline - and it is permissionless for the same reason the rest of the outcome
      *         is: it moves each deposit to the payer who made it, and nowhere else.
      *
-     *         Bounded and resumable: call it until it returns zero. Already-refunded deposits
-     *         are skipped rather than cursored past, because a cursor would be wrong - late
-     *         deposits become refundable at different times from counted ones, so an index
-     *         the scan has already passed can still hold money that is now owed.
-     * @return refunded How many deposits were refunded by this call.
+     *         `maxDeposits` bounds the deposits **examined**, not the refunds made, because
+     *         examining is what costs gas. A window that turns out to be all already-refunded
+     *         costs a bounded scan and returns zero. Drive it by advancing `startIndex` a
+     *         window at a time until `startIndex >= depositCount(poolId)` - not by calling
+     *         until it returns zero, which would stop at the first exhausted window while
+     *         money remained further down the list.
+     *
+     *         `startIndex` is a hint from the caller, not state this contract keeps, and the
+     *         difference is the whole point. A stored cursor would be wrong: late deposits
+     *         become refundable at different times from counted ones, so an index the scan
+     *         has already passed can hold money that is only now owed, and a cursor could
+     *         never go back for it. Already-refunded deposits are skipped rather than cursored
+     *         past, so any window may be re-scanned safely, in any order, by anyone.
+     *
+     *         It also buys the one thing a from-zero scan could not. `_payout` forwards all
+     *         remaining gas, so a payer contract that burns gas in its `receive()` takes
+     *         63/64 of the frame; sitting at a low index, it would block every call that had
+     *         to start at zero. A caller can now step over it and refund everyone else.
+     * @return refunded How many deposits this call actually refunded.
      */
-    function refundAll(uint256 poolId, uint256 maxDeposits) external returns (uint256 refunded) {
+    function refundAll(uint256 poolId, uint256 startIndex, uint256 maxDeposits)
+        external
+        returns (uint256 refunded)
+    {
         Pool storage pool = _pool(poolId);
         _expireIfDue(pool, poolId);
         bool expired = pool.state == State.Expired;
 
         Deposit[] storage deposits = _deposits[poolId];
         uint256 total = deposits.length;
-        for (uint256 i = 0; i < total && refunded < maxDeposits; i++) {
+        if (startIndex >= total) return 0; // Past the end. The expiry above still stands.
+
+        // Clamped rather than added, so a caller passing a huge window gets the rest of the
+        // list instead of an overflow revert.
+        uint256 remaining = total - startIndex;
+        uint256 end = startIndex + (maxDeposits < remaining ? maxDeposits : remaining);
+
+        for (uint256 i = startIndex; i < end; i++) {
             Deposit storage deposit = deposits[i];
             if (!_isRefundable(deposit, expired)) continue;
             refunded++;

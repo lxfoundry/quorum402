@@ -65,7 +65,8 @@ function recordDeposit(
 function expire(uint256 poolId) external;
 function release(uint256 poolId) external;
 function claimRefund(uint256 poolId) external returns (uint256 tinybars);
-function refundAll(uint256 poolId, uint256 maxDeposits) external returns (uint256 refunded);
+function refundAll(uint256 poolId, uint256 startIndex, uint256 maxDeposits)
+    external returns (uint256 refunded);
 function withdraw() external returns (uint256 tinybars);
 ```
 
@@ -76,7 +77,7 @@ function withdraw() external returns (uint256 tinybars);
 | `expire` | anyone | pool is `Open` **and** the deadline has passed; idempotent once `Expired` | Stamps `Expired`, emits the event. **Optional** — the refund paths do it themselves |
 | `release` | anyone | pool is `Met` | Pays `recipient` the counted total, marks `Released` |
 | `claimRefund` | **the payer** | has a refundable deposit | Expires the pool if due, then sweeps every refundable deposit the caller holds |
-| `refundAll` | anyone | bounded by `maxDeposits` | Expires the pool if due, then pushes refunds for up to `maxDeposits` deposits |
+| `refundAll` | anyone | scans the window `[startIndex, startIndex + maxDeposits)` | Expires the pool if due, then pushes refunds for every refundable deposit in the window |
 | `withdraw` | anyone with credit | has credit | Escape hatch when a push transfer failed |
 
 **Due** means `state == Open && block.timestamp >= deadline`, and it is the only condition
@@ -104,8 +105,27 @@ it.
 
 A buyer who spent their HBAR paying may not be able to afford the gas to claim it back.
 `claimRefund` is the trust-minimal path and `refundAll` is the one that actually runs at a
-failed deadline. It is bounded and resumable: call it repeatedly until `depositCount` is
-exhausted.
+failed deadline.
+
+It takes a **window**, `[startIndex, startIndex + maxDeposits)`, and `maxDeposits` bounds the
+deposits *examined* rather than the refunds *made* — because examining is what costs gas, and a
+bound on refunds leaves the scan itself unbounded. Drive it by advancing `startIndex` a window
+at a time until `startIndex >= depositCount`. **Not** by calling until it returns zero: an
+exhausted window returns zero while money is still owed further down the list.
+
+`startIndex` is a caller's hint, not state the contract keeps, and the distinction is the whole
+of the design. A stored cursor would be **wrong**, not merely inelegant: refundability is not
+monotonic in index — a late deposit is refundable the moment it is recorded, a counted one only
+once the pool expires — so an index the scan has already passed can hold money that is only now
+owed, and a cursor could never return for it. Skipping already-refunded deposits instead makes
+every window safe to re-scan, in any order, by anyone.
+
+The window buys one thing a scan fixed at zero could not. Payouts forward all remaining gas (a
+2300-gas stipend would break any payer that is itself a contract), so a payer whose `receive()`
+burns gas takes 63/64 of the frame; sitting at a low index, it would starve every call that had
+to begin at zero, and the refund path that exists precisely for buyers who cannot pay gas would
+be the one a griefer could close. A caller can now step over it. That payer's own deposit stays
+stuck, which is the right place for the cost to land.
 
 ## State
 
@@ -305,7 +325,7 @@ sequenceDiagram
         P-->>G: PoolExpired (if not already stamped)
         P->>B: refund
         P-->>G: Refunded
-        RS->>P: refundAll(poolId, max)
+        RS->>P: refundAll(poolId, start, window)
         P->>B: refund the rest
     end
 ```
