@@ -44,7 +44,16 @@ TODO — mechanism walkthrough, once the escrow and the payment path are wired.
 The scheme semantics and a reference implementation are specified in [`specs/`](specs/),
 written alongside the code rather than after it.
 
-TODO — link the scheme spec once its first draft lands.
+Design decisions are recorded as they are made:
+
+- [ADR 0001 — What `quorum` binds to](specs/adr/0001-what-quorum-binds-to.md) — why the
+  reference implementation composes over `exact`, and why `auth-capture` and `escrow` are
+  named as candidate hold bindings rather than built
+- [ADR 0002 — Payment attribution on Hedera](specs/adr/0002-payment-attribution-on-hedera.md)
+  — why a native Hedera transfer cannot carry a pool join, the options weighed, and the trust
+  boundary this design accepts
+
+TODO — the `quorum` scheme spec itself, as the implementation lands.
 
 ---
 
