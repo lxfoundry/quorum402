@@ -18,6 +18,7 @@
   },
   "include": [
     "hardhat.config.ts",
+    "artifacts/**/*.d.ts",
     "src/**/*.ts",
     "scripts/**/*.ts",
     "test/**/*.ts"

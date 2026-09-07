@@ -9,7 +9,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "hardhat build && tsc --noEmit",
     "build": "hardhat build",
     "test": "hardhat test",
     "accounts:create": "tsx scripts/create-accounts.ts",
