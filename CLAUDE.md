@@ -68,6 +68,43 @@ ETHGlobal disqualifies submissions with *"large single commits or missing histor
 
 The history should show the thing being figured out, because it is.
 
+#### How work reaches `main`
+
+**Every change lands through a branch and a pull request. Nothing is committed to `main`
+directly.**
+
+```
+git checkout -b <type>/<short-slug>     # feat/ fix/ docs/ spec/ chore/ test/
+# ... commit as the work happens, 1 logical change per commit ...
+git push -u origin <branch>
+gh pr create --fill                     # then merge it
+```
+
+- **Branch names** are `<type>/<short-slug>`, matching the commit prefixes above:
+  `feat/threshold-escrow`, `spec/quorum-semantics`, `fix/tinybar-precision`
+- **One branch is one coherent piece of work**, not one day of it. If a branch has been open
+  long enough to touch three unrelated things, it should have been three branches
+- **The granularity rule still applies inside the branch.** A PR containing one enormous
+  commit is the same defect as a single-commit day; the branch is where the small commits
+  live, and the PR is how they arrive together
+- **The PR body says what changed and why**, and links the ADR when a decision drives it.
+  Self-merging is fine on a solo project - the PR is a record, not an approval ritual
+- **Delete the branch after merge** (the repository does this automatically)
+
+#### 🔴 Merge with a merge commit. Never squash
+
+Squash-merging collapses a branch into a single commit and **destroys exactly the granularity
+this project is judged on** - it converts five small, legible commits into one large one, which
+is the shape ETHGlobal names when it disqualifies for *"large single commits"*.
+
+Squash and rebase merging are **disabled on the repository**, so the button is not there to
+press. The rule is written down anyway, because a settings change must not silently become a
+policy change.
+
+The same reasoning rules out force-pushing a shared branch and rewriting merged history. A
+branch that is still unmerged and unshared may be tidied freely - that is what branches are
+for.
+
 ### 4. `AI-USAGE.md` and `specs/` are required deliverables
 
 ETHGlobal's AI policy obliges spec-driven teams to ship **all spec files, prompts and
