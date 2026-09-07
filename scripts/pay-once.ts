@@ -23,13 +23,23 @@ import type { GeneratedAccount } from "./create-accounts.js";
 
 const ACCOUNTS = ".accounts.json";
 
-function loadBuyer(label: string | undefined): GeneratedAccount {
+function loadBuyer(label: string | undefined, expectedNetwork: string): GeneratedAccount {
   if (!existsSync(ACCOUNTS)) {
     throw new Error(`${ACCOUNTS} not found. Run: npm run accounts:create`);
   }
-  const { accounts } = JSON.parse(readFileSync(ACCOUNTS, "utf8")) as {
+  const { network, accounts } = JSON.parse(readFileSync(ACCOUNTS, "utf8")) as {
+    network?: string;
     accounts: GeneratedAccount[];
   };
+  // create-accounts records which network it created against. Without this check, testnet
+  // buyers get used against a mainnet config and fail as INVALID_ACCOUNT_ID - a confusing
+  // error a long way from its cause.
+  if (network && network !== expectedNetwork) {
+    throw new Error(
+      `${ACCOUNTS} holds ${network} accounts but HEDERA_NETWORK is ${expectedNetwork}.\n` +
+        `Point HEDERA_NETWORK at ${network}, or recreate the accounts with: npm run accounts:create -- --force`,
+    );
+  }
   const buyer = label ? accounts.find((a) => a.label === label) : accounts[0];
   if (!buyer) {
     throw new Error(
@@ -48,7 +58,7 @@ async function main(): Promise<void> {
 
   const cfg = loadConfig();
   const network = caip2(cfg.network);
-  const buyer = loadBuyer(buyerLabel);
+  const buyer = loadBuyer(buyerLabel, cfg.network);
   // The seller. Defaults to the operator - any account other than the payer works, and the
   // transfer must net to zero across exactly two parties.
   const payTo = cfg.payToId || cfg.operatorId;
