@@ -92,9 +92,13 @@ async function main(): Promise<number> {
 
   console.log("artifact");
   const artifact = readArtifact();
-  const creationCode = Buffer.from(artifact.bytecode.replace(/^0x/, ""), "hex");
+  // Hex TEXT, not bytes. `ContractCreateFlow` uploads whatever it is given into a Hedera file
+  // and the node reads that file as the hex encoding of the bytecode - so handing it a
+  // `Uint8Array` of the decoded bytes stores raw bytes and fails on the network with
+  // ERROR_DECODING_BYTESTRING, after the file has been created and paid for.
+  const creationCode = artifact.bytecode.replace(/^0x/, "");
   const expectedCodeHash = codeHashOf(artifact.deployedBytecode);
-  ok(`compiled, ${creationCode.length} bytes of creation bytecode`);
+  ok(`compiled, ${creationCode.length / 2} bytes of creation bytecode`);
   info(`runtime code sha256 ${expectedCodeHash}`);
 
   // A second deployment does not replace the first: the old contract keeps running, keeps
@@ -112,9 +116,15 @@ async function main(): Promise<number> {
 
   const client = cfg.network === "testnet" ? Client.forTestnet() : Client.forMainnet();
   client.setOperator(AccountId.fromString(cfg.operatorId), PrivateKey.fromStringECDSA(cfg.operatorKey));
-  // The default cap is well under what a contract creation of this size costs, and the
+  // The SDK's default cap is well under what a contract creation of this size costs, and the
   // failure it produces names the cap rather than the contract.
-  client.setDefaultMaxTransactionFee(new Hbar(30));
+  //
+  // 20 HBAR, not more: `setDefaultMaxTransactionFee` range-checks with `Long.toInt()`, which
+  // takes the low 32 bits, so any cap at or above 2^31 tinybars (~21.47 HBAR) reads as
+  // negative and is rejected as "must be non-negative". A ceiling that low is not a problem
+  // here - the deployment costs a small fraction of it - but the error does not hint at the
+  // real bound, so it is written down rather than rediscovered.
+  client.setDefaultMaxTransactionFee(new Hbar(20));
 
   try {
     console.log("\ncreate");
