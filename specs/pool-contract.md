@@ -165,6 +165,35 @@ nothing to emit.
 > names a real Hedera transaction that any third party can verify against a mirror node — but
 > the contract commits to it in a log rather than in state.
 
+### What belongs in storage
+
+> The contract stores what it must **enforce**. History lives in the events and the subgraph.
+
+Every field above is read by contract logic: `seatTaken` enforces one seat per payer,
+`txIdSeen` refuses a replayed payment, `totalCommitted` backs the solvency invariant, and a
+`Deposit` decides who may be refunded what. Nothing is kept because it might be interesting
+later — a completed pool's participant list is read from the index, not from state.
+
+**`txIdSeen` is permanent, whatever else is ever cleared.** It is the anti-replay guard, and if
+its entry were removed alongside the deposit it guards, a coordinator could record the same
+payment a second time. It has to outlive the thing it protects. This is the one place where
+"delete everything about a settled deposit" is the wrong instinct.
+
+**Reclaiming a settled deposit's slot was considered and declined.** A refunded or released
+deposit stops mattering to the contract, and a `sweep(poolId, maxDeposits)` could clear it. It
+is not built:
+
+- it cannot ride along on `release`, because clearing N entries in one transaction is the same
+  unbounded-loop hazard `refundAll` exists to dodge — so it is a new method, with new tests,
+  touching the refund path, which is the riskiest code here
+- the prize is one slot per buyer, now that a `Deposit` is one slot
+- the gas refund for clearing storage has been small since EIP-3529, and whether Hedera's HSCS
+  honours it at all is unverified here
+
+**Deletion would not be a state, either.** `Released` and `Expired` stay distinct terminal
+states. Collapsing them into one would leave `statusOf` unable to say whether a pool succeeded,
+which is the single fact a reader most wants from it.
+
 ## The solvency invariant
 
 ```
