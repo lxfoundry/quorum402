@@ -25,6 +25,9 @@ contract PickyRecipient {
     }
 
     receive() external payable {
+        // A custom error would be the gas-cheap form. This contract exists to be refused
+        // by, not paid for, and the string is what the test reads.
+        // solhint-disable-next-line gas-custom-errors
         require(accepting, "PickyRecipient: not accepting");
     }
 }

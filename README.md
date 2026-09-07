@@ -1,5 +1,7 @@
 # quorum402
 
+[![CI](https://github.com/lxfoundry/quorum402/actions/workflows/ci.yml/badge.svg)](https://github.com/lxfoundry/quorum402/actions/workflows/ci.yml)
+
 **An HTTP 402 challenge that a crowd can answer together.**
 
 Funds are held, and the resource unlocks only if enough separate buyers pay before the
@@ -109,6 +111,7 @@ test/         contract tests, run on a local EVM pinned to Hedera's target
 specs/        scheme spec, prompts and planning artifacts, written during the build
 AI-USAGE.md   where and how AI tooling was used, and what was done by hand
 .claude/      Claude Code skills used during development (see AI-USAGE.md)
+.github/      CI - builds, lints, type-checks and tests every pull request and main
 ```
 
 ## AI usage
