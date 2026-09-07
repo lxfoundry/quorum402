@@ -29,6 +29,14 @@ contract QuorumPools {
         Released
     }
 
+    /// Why a settled payment took no seat. Emitted with `LateDeposit`; never inferred.
+    enum LateReason {
+        ThresholdMet,
+        DeadlinePassed,
+        SeatTaken,
+        WrongAmount
+    }
+
     /**
      * @dev Field order follows the spec rather than the tightest possible packing. Reordering
      *      would save one slot per pool - paid once, at creation - at the cost of changing the
@@ -46,7 +54,39 @@ contract QuorumPools {
         string resourceUrl;
     }
 
+    /**
+     * @dev One settled x402 payment, attributed to a pool.
+     *
+     *      20 bytes of address, 8 of amount and 2 of flags fit a single slot, which is why the
+     *      amount is `uint64`: total HBAR supply is 5e18 tinybars against a `uint64` ceiling of
+     *      1.8e19, so no real amount can overflow one.
+     *
+     *      `hederaTxId` is deliberately absent. No logic here reads it - the uniqueness guard
+     *      hashes it straight from calldata - so it is emitted rather than stored, where the
+     *      indexer and any human can still find it and it costs nothing to keep.
+     */
+    struct Deposit {
+        address payer; // the EVM address `claimRefund` matches `msg.sender` against
+        uint64 tinybars;
+        bool counted; // false => late: no seat, refundable at once
+        bool refunded;
+    }
+
     Pool[] private _pools;
+
+    /// Deposits per pool, in the order they were recorded. A payer may hold several.
+    mapping(uint256 => Deposit[]) private _deposits;
+
+    /// One seat per payer per pool.
+    mapping(uint256 => mapping(address => bool)) private _seatTaken;
+
+    /**
+     * @dev `keccak256(hederaTxId)` of every payment ever recorded, across all pools, so one
+     *      settlement cannot be counted into two of them. Global on purpose, and permanent:
+     *      it has to outlive the deposit it guards, or a coordinator could record the same
+     *      payment again once that deposit was settled.
+     */
+    mapping(bytes32 => bool) private _txIdSeen;
 
     /// Tinybars this contract owes to a payer or a recipient. Never derived from `balance`.
     uint256 private _totalCommitted;
@@ -61,11 +101,35 @@ contract QuorumPools {
         string resourceUrl
     );
 
+    event DepositRecorded(
+        uint256 indexed poolId,
+        address indexed payer,
+        uint256 depositId,
+        uint64 tinybars,
+        string hederaTxId,
+        uint32 seatsAfter
+    );
+
+    event LateDeposit(
+        uint256 indexed poolId,
+        address indexed payer,
+        uint256 depositId,
+        uint64 tinybars,
+        string hederaTxId,
+        LateReason reason
+    );
+
+    event ThresholdMet(uint256 indexed poolId, uint32 seats, uint64 at);
+
     error BadThreshold();
     error BadUnitAmount();
     error DeadlineInPast();
     error ZeroAddress();
     error NoSuchPool(uint256 poolId);
+    error NoSuchDeposit(uint256 poolId, uint256 depositId);
+    error NotCoordinator(address caller, address coordinator);
+    error DuplicateTransaction(string hederaTxId);
+    error Insolvent(uint256 wouldCommit, uint256 availableTinybars);
 
     /**
      * @notice Open a pool. Anyone may; the caller gains no authority by doing so.
@@ -102,6 +166,69 @@ contract QuorumPools {
         emit PoolCreated(poolId, coordinator, recipient, unitTinybars, threshold, deadline, resourceUrl);
     }
 
+    /**
+     * @notice Attribute one settled x402 payment to a pool.
+     * @dev    The pool's coordinator alone may call this, and calling it is the whole of the
+     *         coordinator's authority: it cannot move funds, change terms, or refund anyone.
+     *
+     *         It never reverts for a buyer-side reason. By the time this runs the buyer's HBAR
+     *         has already landed - a native CryptoTransfer executes no code, so there was
+     *         nothing to reject at the moment it arrived, and refusing it now would only
+     *         strand it (ADR 0004). A payment that cannot take a seat is recorded as a late
+     *         deposit and becomes refundable at once.
+     *
+     *         The three reverts left are all coordinator-side, and every one of them means the
+     *         call is describing something that did not happen: an unknown pool, a payment
+     *         already recorded, or money that is not in this contract.
+     * @return depositId Index of the deposit within the pool.
+     * @return counted   Whether it took a seat.
+     */
+    function recordDeposit(uint256 poolId, address payer, uint64 tinybars, string calldata hederaTxId)
+        external
+        returns (uint256 depositId, bool counted)
+    {
+        Pool storage pool = _pool(poolId);
+        if (msg.sender != pool.coordinator) revert NotCoordinator(msg.sender, pool.coordinator);
+        if (payer == address(0)) revert ZeroAddress();
+
+        {
+            bytes32 txKey = keccak256(bytes(hederaTxId));
+            if (_txIdSeen[txKey]) revert DuplicateTransaction(hederaTxId);
+            _txIdSeen[txKey] = true;
+        }
+
+        // The money must already be here. This is the check that stops a threshold being
+        // crossed - or a refund being promised - against HBAR that never arrived.
+        {
+            uint256 wouldCommit = _totalCommitted + tinybars;
+            uint256 available = address(this).balance / TINYBAR_TO_WEIBAR;
+            if (wouldCommit > available) revert Insolvent(wouldCommit, available);
+            _totalCommitted = wouldCommit;
+        }
+
+        depositId = _deposits[poolId].length;
+
+        (bool late, LateReason reason) = _lateness(pool, poolId, payer, tinybars);
+        counted = !late;
+
+        _deposits[poolId].push(Deposit({payer: payer, tinybars: tinybars, counted: counted, refunded: false}));
+
+        if (late) {
+            emit LateDeposit(poolId, payer, depositId, tinybars, hederaTxId, reason);
+            return (depositId, false);
+        }
+
+        _seatTaken[poolId][payer] = true;
+        uint32 seats = pool.seats + 1;
+        pool.seats = seats;
+        emit DepositRecorded(poolId, payer, depositId, tinybars, hederaTxId, seats);
+
+        if (seats == pool.threshold) {
+            pool.state = State.Met;
+            emit ThresholdMet(poolId, seats, uint64(block.timestamp));
+        }
+    }
+
     /// @notice How many pools exist. Ids are `0 .. poolCount() - 1`.
     function poolCount() external view returns (uint256) {
         return _pools.length;
@@ -120,6 +247,19 @@ contract QuorumPools {
      */
     function statusOf(uint256 poolId) external view returns (State) {
         return _effectiveState(_pool(poolId));
+    }
+
+    /// @notice How many deposits a pool has recorded, counted and late alike.
+    function depositCount(uint256 poolId) external view returns (uint256) {
+        _pool(poolId);
+        return _deposits[poolId].length;
+    }
+
+    /// @notice One deposit, by its index within the pool.
+    function depositAt(uint256 poolId, uint256 depositId) external view returns (Deposit memory) {
+        _pool(poolId);
+        if (depositId >= _deposits[poolId].length) revert NoSuchDeposit(poolId, depositId);
+        return _deposits[poolId][depositId];
     }
 
     /// @notice Tinybars owed to payers and recipients. The left side of the solvency invariant.
@@ -141,6 +281,26 @@ contract QuorumPools {
     function _pool(uint256 poolId) private view returns (Pool storage) {
         if (poolId >= _pools.length) revert NoSuchPool(poolId);
         return _pools[poolId];
+    }
+
+    /**
+     * @dev Whether a payment can take a seat, and if not, why.
+     *
+     *      Resolved in the order that tells the payer the most useful thing: a pool that has
+     *      ended says so first, and only a pool still taking payments reports a taken seat or
+     *      a wrong amount.
+     */
+    function _lateness(Pool storage pool, uint256 poolId, address payer, uint64 tinybars)
+        private
+        view
+        returns (bool late, LateReason reason)
+    {
+        State state = _effectiveState(pool);
+        if (state == State.Expired) return (true, LateReason.DeadlinePassed);
+        if (state != State.Open) return (true, LateReason.ThresholdMet); // Met, or Released
+        if (_seatTaken[poolId][payer]) return (true, LateReason.SeatTaken);
+        if (tinybars != pool.unitTinybars) return (true, LateReason.WrongAmount);
+        return (false, LateReason.ThresholdMet); // unread when `late` is false
     }
 
     function _effectiveState(Pool storage pool) private view returns (State) {
