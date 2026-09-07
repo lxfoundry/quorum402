@@ -25,9 +25,6 @@ has been lost. Integrations serve the primitive; they are not the point of it.
 
 | | |
 |---|---|
-| Build window | **2026-09-07 → 2026-09-11**, Sep 12 in reserve |
-| Feature freeze | **2026-09-11, midday** |
-| Submission | **by end of 2026-09-12** — the deadline is Sep 13, 12:00 EDT, and we do not use it |
 | Settlement target | Hedera Testnet (`hedera:testnet`) |
 | Proposed x402 scheme | **`quorum`** |
 
@@ -46,10 +43,10 @@ and rotating after the fact does not undo the disclosure.
   literals that should be environment variables
 - Testnet keys are still keys. Treat them the same way
 
-### 2. All work in this repository is done during the build window
+### 2. Nothing in this repository predates the event
 
 The Classic track requires that project code, designs and assets be created after the
-hackathon starts. Everything here is written in the window, in the open, in this repo.
+hackathon starts. Everything here is written while it runs, in the open, in this repo.
 
 **Research and reading done beforehand may inform what you write — it must never be pasted
 in as though it were produced during the build.** Knowledge is fine; artifacts are not.
@@ -61,7 +58,7 @@ Only genuinely public libraries and starter kits are exempt, and they must be at
 
 ETHGlobal disqualifies submissions with *"large single commits or missing histories"*.
 
-- **5–8 commits per build day**, one logical change each
+- **5–8 commits on a day of active work**, one logical change each
 - Commit as the work happens. Never bank a day into one evening push
 - Never squash, never force-push over the build history, never backdate
 - Themed, scoped messages: `feat(escrow):`, `spec(quorum):`, `docs(readme):`, `test(pool):`
@@ -193,27 +190,12 @@ An integration a reader cannot locate in the code counts as absent.
   surrounding code's naming, comment density and idiom rather than importing a house style
 - **Tests are for the things that would be embarrassing to get wrong**: threshold
   arithmetic, the refund path, deadline boundaries, double-spend and replay. Not coverage
-  for its own sake — there are five days
-- **Absolute dates** (`2026-09-11`), never "tomorrow" or "next week"
+  for its own sake
+- **Absolute dates** (`2026-09-07`), never "tomorrow" or "next week"
 - **No project-specific content in `.claude/skills/`** — those are a general-purpose public
   library and stay that way. Project instructions belong in this file
-- Prefer deleting a feature to shipping one that does not work in the demo
-
-## Scope discipline
-
-Five build days, one reserve day, no slack behind it. When something overruns, cut scope
-rather than the reserve:
-
-| If this is at risk | Cut to this |
-|---|---|
-| Multi-payer flow not settling | A single-payer x402 flow that works end to end |
-| Threshold settle-or-refund incomplete | Threshold logic without the scheme framing |
-| Demo not reproducible unattended | Fewer buyers, shorter deadline |
-
-A smaller thing that works beats a larger thing that does not. Do not start anything on
-Sep 11 that cannot land by midday.
-
----
+- **A smaller thing that works beats a larger thing that does not.** Prefer deleting a
+  feature to shipping one that does not work in the demo
 
 ## Claude Code skills
 
