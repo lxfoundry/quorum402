@@ -96,9 +96,24 @@ export function decodePaymentHeader(header: string): PaymentPayload {
 
 export const TINYBARS_PER_HBAR = 100_000_000n;
 
-export function hbarToTinybars(hbar: number): bigint {
-  // Route through a string to avoid float drift on values like 0.1.
-  const [whole = "0", frac = ""] = hbar.toString().split(".");
-  const padded = (frac + "00000000").slice(0, 8);
-  return BigInt(whole) * TINYBARS_PER_HBAR + BigInt(padded || "0");
+/** A plain decimal HBAR amount, at most 8 fractional digits. No exponent form. */
+const HBAR_DECIMAL = /^\d+(?:\.\d{1,8})?$/;
+
+/**
+ * Convert an HBAR amount to tinybars.
+ *
+ * Takes a string rather than a number deliberately. `Number.prototype.toString()` switches to
+ * scientific notation for small magnitudes - `0.00000001` stringifies as `"1e-8"` - and those
+ * digits then fail to parse as a BigInt. Working from the caller's original text avoids that
+ * and the float drift that afflicts values like 0.1 at the same time.
+ */
+export function hbarToTinybars(hbar: string): bigint {
+  if (!HBAR_DECIMAL.test(hbar)) {
+    throw new Error(
+      `Amount must be a plain decimal with at most 8 fractional digits (tinybar precision), ` +
+        `got "${hbar}". Scientific notation is not accepted.`,
+    );
+  }
+  const [whole = "0", frac = ""] = hbar.split(".");
+  return BigInt(whole) * TINYBARS_PER_HBAR + BigInt(frac.padEnd(8, "0"));
 }

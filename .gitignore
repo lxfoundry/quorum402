@@ -7,6 +7,9 @@
 secrets.json
 **/mnemonic*
 **/*seed-phrase*
+# generated testnet accounts - contains private keys
+.accounts.json
+*.accounts.json
 
 # --- dependencies ---
 node_modules/

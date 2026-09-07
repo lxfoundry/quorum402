@@ -59,11 +59,43 @@ export interface VerifyResponse {
 export interface SettlementResponse {
   success: boolean;
   errorReason?: string | null;
-  /** Hedera transaction id, e.g. `0.0.1235@1700000000.000000000`. */
+  /**
+   * Hedera transaction id, e.g. `0.0.1235@1700000000.000000000`.
+   *
+   * Facilitators are inconsistent about this field's name - the Hedera binding document shows
+   * `transactionId`, while the generic v2 settlement response uses `transaction`. Read it
+   * through `settlementTxId()` rather than off one property.
+   */
   transactionId?: string;
+  transaction?: string;
+  txHash?: string;
   network?: Network;
   /** The fee payer that sponsored the transaction. */
   payer?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * A Hedera transaction id: `<shard>.<realm>.<num>@<seconds>.<nanos>` as the SDK renders it,
+ * or the same with `-` separators as the mirror node does.
+ */
+const HEDERA_TX_ID = /^\d+\.\d+\.\d+[@-]\d+[.-]\d+$/;
+
+/**
+ * Pull the on-chain transaction id out of a settlement response, whatever it called it.
+ *
+ * Every candidate is format-checked rather than returned on presence alone. A facilitator may
+ * put an EVM-style hex hash in one of these fields, and handing that back as a transaction id
+ * yields a dead mirror-node lookup and a broken HashScan link - a silent failure that looks
+ * like a successful settlement. Returning `undefined` is the honest answer; the caller then
+ * reports the raw body instead of a link that goes nowhere.
+ */
+export function settlementTxId(res: SettlementResponse): string | undefined {
+  for (const key of ["transactionId", "transaction", "txHash"] as const) {
+    const value = res[key];
+    if (typeof value === "string" && HEDERA_TX_ID.test(value)) return value;
+  }
+  return undefined;
 }
 
 export interface SupportedKind {
