@@ -40,7 +40,7 @@ buyer signs one x402 payment and does nothing else.
 function createPool(
     address recipient,
     address coordinator,
-    uint256 unitTinybars,
+    uint64  unitTinybars,
     uint32  threshold,
     uint64  deadline,
     string calldata resourceUrl
@@ -49,7 +49,7 @@ function createPool(
 function recordDeposit(
     uint256 poolId,
     address payer,
-    uint256 tinybars,
+    uint64  tinybars,
     string calldata hederaTxId
 ) external returns (uint256 depositId, bool counted);
 
@@ -121,7 +121,7 @@ enum State { Open, Met, Expired, Released }
 struct Pool {
     address recipient;
     address coordinator;
-    uint256 unitTinybars;
+    uint64  unitTinybars;
     uint32  threshold;
     uint32  seats;          // counted deposits so far
     uint64  deadline;       // unix seconds
@@ -131,11 +131,17 @@ struct Pool {
 
 struct Deposit {
     address payer;          // EVM address, so claimRefund has a msg.sender to match
-    uint256 tinybars;
+    uint64  tinybars;
     bool    counted;        // false => late: no seat, refundable at once
     bool    refunded;
 }
 ```
+
+Amounts are `uint64`. Total HBAR supply is 5x10^18 tinybars against a `uint64` ceiling of
+1.8x10^19, so no real amount can overflow one — and a `Deposit` then fits in a **single storage
+slot**: 20 bytes of address, 8 of amount, 2 of flags. `totalCommitted` stays `uint256`, because
+it occupies a whole slot either way and the wider type removes any need to reason about a sum
+overflowing at all.
 
 Plus, at contract level:
 
@@ -190,15 +196,15 @@ Every state transition emits, so a subgraph reconstructs full pool state with no
 event PoolCreated(uint256 indexed poolId, address indexed coordinator, address indexed recipient,
                   uint256 unitTinybars, uint32 threshold, uint64 deadline, string resourceUrl);
 event DepositRecorded(uint256 indexed poolId, address indexed payer, uint256 depositId,
-                      uint256 tinybars, string hederaTxId, uint32 seatsAfter);
+                      uint64 tinybars, string hederaTxId, uint32 seatsAfter);
 event LateDeposit(uint256 indexed poolId, address indexed payer, uint256 depositId,
-                  uint256 tinybars, string hederaTxId, LateReason reason);
+                  uint64 tinybars, string hederaTxId, LateReason reason);
 event ThresholdMet(uint256 indexed poolId, uint32 seats, uint64 at);
 event PoolExpired(uint256 indexed poolId, uint64 at);
-event Released(uint256 indexed poolId, address indexed recipient, uint256 tinybars);
-event Refunded(uint256 indexed poolId, address indexed payer, uint256 depositId, uint256 tinybars);
-event PayoutFailed(uint256 indexed poolId, address indexed to, uint256 tinybars);
-event Withdrawn(address indexed to, uint256 tinybars);
+event Released(uint256 indexed poolId, address indexed recipient, uint64 tinybars);
+event Refunded(uint256 indexed poolId, address indexed payer, uint256 depositId, uint64 tinybars);
+event PayoutFailed(uint256 indexed poolId, address indexed to, uint64 tinybars);
+event Withdrawn(address indexed to, uint64 tinybars);
 
 enum LateReason { ThresholdMet, DeadlinePassed, SeatTaken, WrongAmount }
 ```
