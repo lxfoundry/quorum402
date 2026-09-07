@@ -25,7 +25,7 @@ can do anything else with the funds, including the person who deployed the contr
 | Actor | Calls the contract | Authority |
 |---|---|---|
 | **Offerer** | `createPool`; receives on release | None special — it is simply the named `recipient` |
-| **Coordinator** (the resource server) | `recordDeposit` only | Per-pool. Cannot move funds, cannot change terms, cannot refund to itself |
+| **Coordinator** (the resource server) | `recordDeposit` only | Per-pool. Cannot move funds, cannot change terms, cannot reach money already attributed to another payer or pool — but see below |
 | **Buyer** | **Nothing on the happy path.** `claimRefund` only if the pool fails | Itself only |
 | **Facilitator** | Never | Off-contract: adds the fee-payer signature and submits the transfer |
 | **Deployer** | — | **Does not exist as a role.** No owner, no pause, no upgrade |
@@ -33,6 +33,15 @@ can do anything else with the funds, including the person who deployed the contr
 The buyer touching nothing is not an accident of convenience — it is what
 [ADR 0002](adr/0002-payment-attribution-on-hedera.md) forces, and it is the demo's point: a
 buyer signs one x402 payment and does nothing else.
+
+**What a coordinator can still do, stated exactly.** It can name itself as the `payer` of a
+deposit for a wrong amount, which is late on arrival and therefore refundable at once, and then
+claim it. The solvency gate in `recordDeposit` bounds that to HBAR sitting in the contract that
+no deposit has been attributed to yet, so it cannot touch another payer's money or another
+pool's — but "cannot refund to itself" would be too strong a claim, and the code disproves it in
+one call. This is the race
+[ADR 0003](adr/0003-pool-authority-model.md#the-limitation-this-accepts-coordinators-can-race-for-unattributed-funds)
+accepts and explains: one Hedera entity per pool closes it, at a cost the demo does not pay.
 
 ## Methods
 
