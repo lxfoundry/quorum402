@@ -45,8 +45,12 @@ jobs:
       # `hardhat test` runs TypeScript through tsx, which strips types without checking
       # them. Without this step the TypeScript in src/, scripts/ and test/ is never
       # type-checked by anything.
+      #
+      # `typecheck:ts` rather than `typecheck`, because the latter builds first - which it
+      # has to do for anyone running it on its own, since `tsc` reads the contract types
+      # hardhat generates. Here the Build step above has already done that.
       - name: Typecheck
-        run: npm run typecheck
+        run: npm run typecheck:ts
 
       - name: Test
         run: npm test
