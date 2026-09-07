@@ -147,6 +147,45 @@ describe("claimRefund", () => {
     assert.equal(await pools.read.committedTinybars(), 0n);
     assert.equal(await pools.read.balanceTinybars(), 0n);
   });
+
+  it("pays each of a reentering payer's deposits exactly once, when the inner claim succeeds", async () => {
+    const attacker = await viem.deployContract("ReentrantPayer");
+    const fixture = await poolFixture({ threshold: 3 });
+    const { pools, asCoordinator, settle, unit, deadline, publicClient } = fixture;
+
+    // Two deposits from one payer: the first takes a seat, the second cannot and is late from
+    // the moment it lands. Both are refundable once the pool expires, which is what makes the
+    // inner claim find something to pay - the case the single-deposit test above cannot reach,
+    // because there the reentry always reverts NothingToRefund and proves only that the
+    // attacker got nothing. Here the reentry *succeeds*, and what stops the money being paid
+    // twice is the storage re-read of `refunded` on each pass of the outer loop.
+    await settle(unit);
+    await asCoordinator.write.recordDeposit([0n, attacker.address, unit, txId(1)]);
+    await settle(unit);
+    await asCoordinator.write.recordDeposit([0n, attacker.address, unit, txId(2)]);
+    await attacker.write.arm([pools.address, 0n]);
+    await time.increaseTo(deadline);
+
+    const before = await publicClient.getBalance({ address: attacker.address });
+    await attacker.write.claim();
+    const after = await publicClient.getBalance({ address: attacker.address });
+
+    assert.equal(await attacker.read.reentryAttempts(), 1n);
+    assert.equal(await attacker.read.reentryPaid(), true);
+    assert.equal(after - before, weibars(unit * 2n));
+
+    // Where a double payment would show: the contract would be short, and would still believe
+    // it owed something.
+    assert.equal(await pools.read.committedTinybars(), 0n);
+    assert.equal(await pools.read.balanceTinybars(), 0n);
+
+    const [first, second] = [
+      await pools.read.depositAt([0n, 0n]),
+      await pools.read.depositAt([0n, 1n]),
+    ];
+    assert.equal(first.refunded, true);
+    assert.equal(second.refunded, true);
+  });
 });
 
 describe("refundAll", () => {
