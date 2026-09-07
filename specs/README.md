@@ -12,8 +12,9 @@ and rejected, and limitations that were accepted deliberately.
 
 ```
 specs/
-├── README.md          this file
-└── adr/               architecture decision records, numbered and dated
+├── README.md            this file
+├── pool-contract.md     the pool contract interface, written before the code
+└── adr/                 architecture decision records, numbered and dated
 ```
 
 ## Architecture decision records
@@ -28,6 +29,15 @@ wrong gets a new ADR that supersedes it, rather than a quiet edit.
 | [0002](adr/0002-payment-attribution-on-hedera.md) | Payment attribution on Hedera | 2026-09-07 | Accepted |
 | [0003](adr/0003-pool-authority-model.md) | Who may do what to a pool | 2026-09-07 | Accepted |
 | [0004](adr/0004-deposits-that-cannot-be-refused.md) | Deposits that cannot be refused | 2026-09-07 | Accepted |
+
+## Component specs
+
+Interfaces written before the code that implements them, so the ADRs above have somewhere
+concrete to land.
+
+| Spec | What it covers |
+|---|---|
+| [pool-contract.md](pool-contract.md) | Roles and authority, methods, state machine, events and the solvency invariant of the contract that holds a pool's funds |
 
 ## Conventions
 
