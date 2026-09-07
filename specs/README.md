@@ -27,6 +27,7 @@ wrong gets a new ADR that supersedes it, rather than a quiet edit.
 | [0001](adr/0001-what-quorum-binds-to.md) | What `quorum` binds to | 2026-09-07 | Accepted |
 | [0002](adr/0002-payment-attribution-on-hedera.md) | Payment attribution on Hedera | 2026-09-07 | Accepted |
 | [0003](adr/0003-pool-authority-model.md) | Who may do what to a pool | 2026-09-07 | Accepted |
+| [0004](adr/0004-deposits-that-cannot-be-refused.md) | Deposits that cannot be refused | 2026-09-07 | Accepted |
 
 ## Conventions
 
