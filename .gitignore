@@ -1,0 +1,39 @@
+# --- secrets: this repository is public and stays public. Never commit these ---
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets.json
+**/mnemonic*
+**/*seed-phrase*
+
+# --- dependencies ---
+node_modules/
+.pnp
+.pnp.js
+.yarn/
+
+# --- build output ---
+dist/
+build/
+out/
+artifacts/
+cache/
+cache_hardhat/
+typechain/
+typechain-types/
+coverage/
+coverage.json
+*.tsbuildinfo
+
+# --- tooling ---
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+.vscode/
+.idea/
+
+# --- Claude Code local state (skills ARE committed, see CLAUDE.md) ---
+.claude/settings.local.json
