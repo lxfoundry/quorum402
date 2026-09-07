@@ -186,7 +186,7 @@ is not built:
 - it cannot ride along on `release`, because clearing N entries in one transaction is the same
   unbounded-loop hazard `refundAll` exists to dodge — so it is a new method, with new tests,
   touching the refund path, which is the riskiest code here
-- the prize is one slot per buyer, now that a `Deposit` is one slot
+- the saving is one slot per buyer, now that a `Deposit` is one slot
 - the gas refund for clearing storage has been small since EIP-3529, and whether Hedera's HSCS
   honours it at all is unverified here
 
@@ -329,10 +329,3 @@ Minutes each, and the first one can invalidate the design.
    arithmetic depends on it.
 4. Does subgraph indexing reach Hedera testnet contracts, and through whose graph-node? The
    Graph integration rests on it.
-
-## Scope, if the days run short
-
-Per the scope table in [`CLAUDE.md`](../CLAUDE.md), cut in this order: `refundAll` and
-`withdraw` first — they are convenience and an escape hatch. Then multi-pool. **The solvency
-invariant and late-deposit handling are not cuttable**; they are the correctness story, and
-without them the contract can lose a buyer's money.
