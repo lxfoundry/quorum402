@@ -59,11 +59,29 @@ export interface VerifyResponse {
 export interface SettlementResponse {
   success: boolean;
   errorReason?: string | null;
-  /** Hedera transaction id, e.g. `0.0.1235@1700000000.000000000`. */
+  /**
+   * Hedera transaction id, e.g. `0.0.1235@1700000000.000000000`.
+   *
+   * Facilitators are inconsistent about this field's name - the Hedera binding document shows
+   * `transactionId`, while the generic v2 settlement response uses `transaction`. Read it
+   * through `settlementTxId()` rather than off one property.
+   */
   transactionId?: string;
+  transaction?: string;
+  txHash?: string;
   network?: Network;
   /** The fee payer that sponsored the transaction. */
   payer?: string;
+  [key: string]: unknown;
+}
+
+/** Pull the on-chain transaction id out of a settlement response, whatever it called it. */
+export function settlementTxId(res: SettlementResponse): string | undefined {
+  for (const key of ["transactionId", "transaction", "txHash"] as const) {
+    const value = res[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return undefined;
 }
 
 export interface SupportedKind {
