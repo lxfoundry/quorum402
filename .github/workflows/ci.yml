@@ -1,0 +1,52 @@
+name: CI
+
+# Every pull request, whatever it targets - branches stack during a build, and a PR based on
+# another open branch has to be checked too. Plus main itself, so a merge commit is verified
+# as the thing that actually exists, not just as the two sides that went into it.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# One run per branch. A superseded pull-request run is worth nothing, so cancel it; a run on
+# main is a record of a merged commit, so let it finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: build, lint, test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          # Tracks `engines.node` in package.json, which is `>=22`. Pinned to the major
+          # rather than a patch: nothing here needs a specific 22.x, and a pinned patch
+          # would rot without anyone noticing.
+          node-version: "22"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Lint
+        run: npm run lint
+
+      # `hardhat test` runs TypeScript through tsx, which strips types without checking
+      # them. Without this step the TypeScript in src/, scripts/ and test/ is never
+      # type-checked by anything.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
