@@ -63,7 +63,7 @@ function withdraw() external returns (uint256 tinybars);
 | Method | Caller | Gate | Effect |
 |---|---|---|---|
 | `createPool` | anyone | `threshold > 0`, `unitTinybars > 0`, `deadline > block.timestamp`, non-zero addresses | Allocates `poolId`; terms are immutable thereafter |
-| `recordDeposit` | **the pool's coordinator** | `msg.sender == pool.coordinator` | Attributes one settled payment. Never reverts for a buyer-side reason — [ADR 0004](adr/0004-deposits-that-cannot-be-refused.md) |
+| `recordDeposit` | **the pool's coordinator** | `msg.sender == pool.coordinator` | Attributes one settled payment; marks `Met` and emits `ThresholdMet` when the seat count reaches the threshold. Never reverts for a buyer-side reason — [ADR 0004](adr/0004-deposits-that-cannot-be-refused.md) |
 | `expire` | anyone | pool is `Open` **and** the deadline has passed; idempotent once `Expired` | Stamps `Expired`, emits the event. **Optional** — the refund paths do it themselves |
 | `release` | anyone | pool is `Met` | Pays `recipient` the counted total, marks `Released` |
 | `claimRefund` | **the payer** | has a refundable deposit | Expires the pool if due, then sweeps every refundable deposit the caller holds |
