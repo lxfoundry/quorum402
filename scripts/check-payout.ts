@@ -1,19 +1,18 @@
 /**
  * Does a released pool pay its recipient exactly what the buyer put in?
  *
- * This is the one question the local suite cannot answer. The contract keeps its ledger in
- * tinybars while Hedera's EVM moves weibars, so `TINYBAR_TO_WEIBAR = 1e10` sits at the two
- * places the units meet - the solvency ceiling and the payout. `test/helpers.ts` defines its
- * own copy of that constant and crosses it against the contract's, so a wrong constant *in
- * the contract* already fails the suite. What nothing local can say is whether 1e10 is
- * Hedera's real ratio, because both sides of that comparison were written here.
+ * This is the one question the local suite cannot answer, and the first run of this script
+ * answered it the other way from what the spec had assumed: the contract had been written
+ * believing Hedera's EVM denominates value in 18-decimal weibars, and it does not. Both sides
+ * of the local comparison were written here, so the suite could only ever confirm that this
+ * repository agreed with itself.
  *
  * So this asks the network, twice and in two directions:
  *
- *   1. the contract's own `balanceTinybars()` against the balance the mirror node reports,
- *      which crosses `address(this).balance / TINYBAR_TO_WEIBAR` with Hedera's accounting
- *   2. the recipient's balance either side of a real `release`, which crosses
- *      `tinybars * TINYBAR_TO_WEIBAR` with it in the other direction
+ *   1. the contract's own `balanceTinybars()` - `address(this).balance` unmodified - against
+ *      the balance the mirror node reports, which is Hedera's own accounting in tinybars
+ *   2. the recipient's balance either side of a real `release`, which puts `call{value:}` on
+ *      the same scale from the other end
  *
  * One pool, threshold 1, one real x402 payment, one release. It spends testnet HBAR and
  * leaves a released pool behind, so keep `--hbar` small.
@@ -156,16 +155,8 @@ async function main(): Promise<number> {
     console.log("\nbefore");
     const contractBefore = await balanceTinybars(cfg.mirrorUrl, contractId);
     const recipientBefore = await balanceTinybars(cfg.mirrorUrl, recipientAccount.accountId);
-    const selfReported = await pools.balanceTinybars();
-    info(`contract  ${contractBefore} tinybars (mirror), ${selfReported} (the contract's own view)`);
+    info(`contract  ${contractBefore} tinybars`);
     info(`recipient ${recipientBefore} tinybars`);
-    if (selfReported === contractBefore) {
-      ok("the contract's weibar-to-tinybar conversion agrees with Hedera's accounting");
-    } else {
-      bad(`the contract reads its balance as ${selfReported}, the network says ${contractBefore}`);
-      info("TINYBAR_TO_WEIBAR is wrong, or Hedera's ratio is not 1e10");
-      failures++;
-    }
 
     console.log("\ncreate pool");
     const deadline = Math.floor(Date.now() / 1000) + POOL_SECONDS;
@@ -219,6 +210,19 @@ async function main(): Promise<number> {
       ok(`contract holds ${funded} tinybars, up by the unit price`);
     } else {
       bad(`contract holds ${funded} tinybars, expected ${contractBefore + unitTinybars}`);
+      failures++;
+    }
+
+    // The first of the two unit checks, and it only means anything with money in the contract:
+    // `balanceTinybars()` returns `address(this).balance` straight out of the EVM, so agreeing
+    // with the mirror node says the EVM counts in tinybars - not in the 18-decimal weibars the
+    // JSON-RPC relay shows Ethereum tooling. Run against an empty contract it passes on 0 == 0
+    // and proves nothing, which is how the wrong unit survived being written down.
+    const selfReported = await pools.balanceTinybars();
+    if (selfReported === funded && funded > 0n) {
+      ok(`the contract reads its own balance as ${selfReported} - the EVM counts in tinybars`);
+    } else {
+      bad(`the contract reads its balance as ${selfReported}, the network says ${funded}`);
       failures++;
     }
 
@@ -287,7 +291,7 @@ main().then(
   (failures) => {
     console.log(
       failures === 0
-        ? "\n1 tinybar = 1e10 weibar, observed rather than documented\n"
+        ? "\nthe EVM moves tinybars, in and out - observed, not documented\n"
         : `\nFAILED with ${failures} problem(s)\n`,
     );
     process.exit(failures === 0 ? 0 : 1);
