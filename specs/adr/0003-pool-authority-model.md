@@ -83,7 +83,8 @@ and because it makes the contract read as one backend's private ledger rather th
 implementation of a scheme. `quorum` is proposed as a scheme others would implement; a venue
 whose operation requires the author's server is a poor argument for that.
 
-**Option C is better and is not affordable now.** See the limitation below.
+**Option C is better where coordinators distrust each other, and costs more than this
+deployment needs.** See the limitation below.
 
 ## Consequences
 
@@ -101,9 +102,10 @@ with short deadlines.
 
 **This is a real weakness of a shared deposit address, and Option C is the fix**, not a larger
 invariant: one Hedera entity per pool segregates the funds and the race disappears. It is not
-built now because it adds a contract deployment and a mirror-node entity-id lookup per pool, on
-day 1 of a five-day build, ahead of any working pool. **The demo runs a single coordinator, so
-the race is not exercised; the design does not depend on that being true.**
+built because it costs a contract deployment and a mirror-node entity-id lookup per pool, paid
+before any pool works at all, to close a race that only opens between coordinators who distrust
+each other. **The demo runs a single coordinator, so the race is not exercised; the design does
+not depend on that being true.**
 
 ### Other consequences
 
