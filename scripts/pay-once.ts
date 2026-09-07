@@ -50,10 +50,13 @@ function loadBuyer(label: string | undefined, expectedNetwork: string): Generate
 }
 
 async function main(): Promise<void> {
-  const hbar = Number(process.argv[2] ?? 1);
+  // Keep the argv text as-is; converting through Number() first would mangle small amounts
+  // into scientific notation before they ever reach the tinybar conversion.
+  const hbarText = process.argv[2] ?? "1";
   const buyerLabel = process.argv[3];
-  if (!Number.isFinite(hbar) || hbar <= 0) {
-    throw new Error(`amount must be positive, got "${process.argv[2]}"`);
+  const amountTinybars = hbarToTinybars(hbarText);
+  if (amountTinybars <= 0n) {
+    throw new Error(`amount must be greater than zero, got "${hbarText}"`);
   }
 
   const cfg = loadConfig();
@@ -74,7 +77,7 @@ async function main(): Promise<void> {
     // 1. Ask the facilitator who pays fees. Never hardcode this.
     const feePayer = await facilitator.feePayerFor(network);
 
-    const amount = hbarToTinybars(hbar).toString();
+    const amount = amountTinybars.toString();
     const resource: ResourceDescriptor = {
       url: "https://quorum402.example/pool/demo",
       description: "quorum402 single-payer settlement check",
@@ -95,7 +98,7 @@ async function main(): Promise<void> {
     console.log(`\npayer     ${buyer.accountId} (${buyer.label})`);
     console.log(`payTo     ${payTo}`);
     console.log(`feePayer  ${feePayer}  (facilitator sponsors gas and submits)`);
-    console.log(`amount    ${amount} tinybars  (${hbar} HBAR)\n`);
+    console.log(`amount    ${amount} tinybars  (${hbarText} HBAR)\n`);
 
     // 3. Buyer signs a transaction it cannot submit: the transaction id belongs to the
     //    facilitator, so only the facilitator's signature can complete it.
