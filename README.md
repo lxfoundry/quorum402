@@ -73,7 +73,23 @@ TODO — the `quorum` scheme spec itself, as the implementation lands.
 
 | Contract | Network | Address | Explorer |
 |---|---|---|---|
-| TODO | Hedera Testnet | TODO | TODO |
+| [QuorumPools](contracts/QuorumPools.sol) | Hedera Testnet | `0.0.10409836` · `0x00000000000000000000000000000000009ed76c` | [HashScan](https://hashscan.io/testnet/contract/0.0.10409836) |
+
+The Hedera id is the one that matters: it is what a pool puts in the x402
+`PaymentRequirements.payTo`, so a buyer's payment lands **in the contract** rather than in
+anyone's custody.
+
+The contract has **no external admin key** — it is its own administrator, which is what
+Hedera records for a contract created without one, and it cannot be updated or deleted by
+anybody. You do not have to take that on trust, or the address either:
+
+```bash
+npm run build && npm run check:deployment
+```
+
+reads the runtime bytecode back from the mirror node, hashes it against what this tree
+compiles to, and checks who can change it. The deployment record it checks against is
+[deployments/hedera-testnet.json](deployments/hedera-testnet.json).
 
 ## Partner integrations
 
@@ -105,8 +121,9 @@ TODO — video link.
 
 ```
 contracts/    the pool contract that holds a pool's funds, and its test support
-src/          the x402 wire types and the Hedera `exact` payment path
-scripts/      preflight checks against Hedera testnet, run before the design relied on them
+src/          the x402 wire types, the Hedera `exact` payment path, the deployment record
+scripts/      deployment, and checks against Hedera testnet that anyone can re-run
+deployments/  what is deployed where, and the hash that proves it is this code
 test/         contract tests, run on a local EVM pinned to Hedera's target
 specs/        scheme spec, prompts and planning artifacts, written during the build
 AI-USAGE.md   where and how AI tooling was used, and what was done by hand
