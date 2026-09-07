@@ -7,7 +7,6 @@
  *
  * Run: npm run pay -- [hbarAmount] [buyerLabel]
  */
-import { readFileSync, existsSync } from "node:fs";
 import { AccountId, Client, PrivateKey } from "@hiero-ledger/sdk";
 import { caip2, loadConfig } from "../src/config.js";
 import { Facilitator } from "../src/x402/facilitator.js";
@@ -19,35 +18,7 @@ import {
 } from "../src/x402/hedera-exact.js";
 import { settlementTxId } from "../src/x402/types.js";
 import type { PaymentRequirements, ResourceDescriptor } from "../src/x402/types.js";
-import type { GeneratedAccount } from "./create-accounts.js";
-
-const ACCOUNTS = ".accounts.json";
-
-function loadBuyer(label: string | undefined, expectedNetwork: string): GeneratedAccount {
-  if (!existsSync(ACCOUNTS)) {
-    throw new Error(`${ACCOUNTS} not found. Run: npm run accounts:create`);
-  }
-  const { network, accounts } = JSON.parse(readFileSync(ACCOUNTS, "utf8")) as {
-    network?: string;
-    accounts: GeneratedAccount[];
-  };
-  // create-accounts records which network it created against. Without this check, testnet
-  // buyers get used against a mainnet config and fail as INVALID_ACCOUNT_ID - a confusing
-  // error a long way from its cause.
-  if (network && network !== expectedNetwork) {
-    throw new Error(
-      `${ACCOUNTS} holds ${network} accounts but HEDERA_NETWORK is ${expectedNetwork}.\n` +
-        `Point HEDERA_NETWORK at ${network}, or recreate the accounts with: npm run accounts:create -- --force`,
-    );
-  }
-  const buyer = label ? accounts.find((a) => a.label === label) : accounts[0];
-  if (!buyer) {
-    throw new Error(
-      `No such buyer "${label}". Available: ${accounts.map((a) => a.label).join(", ")}`,
-    );
-  }
-  return buyer;
-}
+import { loadBuyer } from "./accounts.js";
 
 async function main(): Promise<void> {
   // Keep the argv text as-is; converting through Number() first would mangle small amounts
