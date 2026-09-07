@@ -3,9 +3,6 @@ import { network } from "hardhat";
 export const { viem, networkHelpers } = await network.getOrCreate();
 export const { time } = networkHelpers;
 
-/** 1 tinybar in weibars. Hedera's EVM denominates HBAR in weibars; x402 quotes tinybars. */
-export const TINYBAR_TO_WEIBAR = 10n ** 10n;
-
 export const HOUR = 3600n;
 
 /** 1 HBAR, in tinybars - the unit price every fixture uses unless it says otherwise. */
@@ -14,11 +11,6 @@ export const UNIT = 100_000_000n;
 export const RESOURCE = "https://quorum402.example/resource/1";
 
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
-
-/** Tinybars as weibars - what a `value:` field wants when the ledger is kept in tinybars. */
-export function weibars(tinybars: bigint): bigint {
-  return tinybars * TINYBAR_TO_WEIBAR;
-}
 
 export enum State {
   Open = 0,
@@ -75,7 +67,7 @@ export async function poolFixture(options: PoolOptions = {}) {
    * attribution is `recordDeposit`'s job either way.
    */
   async function settle(tinybars: bigint): Promise<void> {
-    const hash = await offerer!.sendTransaction({ to: pools.address, value: weibars(tinybars) });
+    const hash = await offerer!.sendTransaction({ to: pools.address, value: tinybars });
     await publicClient.waitForTransactionReceipt({ hash });
   }
 

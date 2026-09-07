@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseEventLogs } from "viem";
-import { State, poolFixture, takeSeats, time, txId, viem, weibars } from "./helpers.js";
+import { State, poolFixture, takeSeats, time, txId, viem } from "./helpers.js";
 
 describe("claimRefund", () => {
   it("pays a buyer back when the pool missed its deadline", async () => {
@@ -15,7 +15,7 @@ describe("claimRefund", () => {
 
     await viem.assertions.emitWithArgs(tx, pools, "Refunded", [0n, buyer(0), 0n, unit]);
     await viem.assertions.balancesHaveChanged(tx, [
-      { address: buyer(0), amount: weibars(unit) },
+      { address: buyer(0), amount: unit },
     ]);
 
     assert.equal((await pools.read.depositAt([0n, 0n])).refunded, true);
@@ -76,7 +76,7 @@ describe("claimRefund", () => {
     const asBuyer = await fixture.asBuyer(0);
     const tx = await asBuyer.write.claimRefund([0n]);
 
-    await viem.assertions.balancesHaveChanged(tx, [{ address: buyer(0), amount: weibars(short) }]);
+    await viem.assertions.balancesHaveChanged(tx, [{ address: buyer(0), amount: short }]);
     assert.equal(await pools.read.committedTinybars(), 0n);
     assert.equal(await pools.read.statusOf([0n]), State.Open); // still open, still fillable
   });
@@ -91,7 +91,7 @@ describe("claimRefund", () => {
 
     const asLate = await fixture.asBuyer(5);
     const tx = await asLate.write.claimRefund([0n]);
-    await viem.assertions.balancesHaveChanged(tx, [{ address: buyer(5), amount: weibars(unit) }]);
+    await viem.assertions.balancesHaveChanged(tx, [{ address: buyer(5), amount: unit }]);
     assert.equal(await pools.read.committedTinybars(), 0n);
   });
 
@@ -108,7 +108,7 @@ describe("claimRefund", () => {
     const asBuyer = await fixture.asBuyer(0);
     const tx = await asBuyer.write.claimRefund([0n]);
     await viem.assertions.balancesHaveChanged(tx, [
-      { address: buyer(0), amount: weibars(unit * 3n) },
+      { address: buyer(0), amount: unit * 3n },
     ]);
     assert.equal(await pools.read.committedTinybars(), 0n);
   });
@@ -143,7 +143,7 @@ describe("claimRefund", () => {
 
     assert.equal(await attacker.read.reentryAttempts(), 1n);
     assert.equal(await attacker.read.reentryPaid(), false);
-    assert.equal(after - before, weibars(unit));
+    assert.equal(after - before, unit);
     assert.equal(await pools.read.committedTinybars(), 0n);
     assert.equal(await pools.read.balanceTinybars(), 0n);
   });
@@ -172,7 +172,7 @@ describe("claimRefund", () => {
 
     assert.equal(await attacker.read.reentryAttempts(), 1n);
     assert.equal(await attacker.read.reentryPaid(), true);
-    assert.equal(after - before, weibars(unit * 2n));
+    assert.equal(after - before, unit * 2n);
 
     // Where a double payment would show: the contract would be short, and would still believe
     // it owed something.
@@ -197,9 +197,9 @@ describe("refundAll", () => {
 
     const tx = await pools.write.refundAll([0n, 0n, 10n]);
     await viem.assertions.balancesHaveChanged(tx, [
-      { address: buyer(0), amount: weibars(unit) },
-      { address: buyer(1), amount: weibars(unit) },
-      { address: buyer(2), amount: weibars(unit) },
+      { address: buyer(0), amount: unit },
+      { address: buyer(1), amount: unit },
+      { address: buyer(2), amount: unit },
     ]);
     assert.equal(await pools.read.committedTinybars(), 0n);
   });
@@ -267,8 +267,8 @@ describe("refundAll", () => {
     // Starting past it, the same gas is plenty, and the honest buyers are paid.
     const tx = await pools.write.refundAll([0n, 1n, 10n], { gas });
     await viem.assertions.balancesHaveChanged(tx, [
-      { address: buyer(0), amount: weibars(unit) },
-      { address: buyer(1), amount: weibars(unit) },
+      { address: buyer(0), amount: unit },
+      { address: buyer(1), amount: unit },
     ]);
     assert.equal(await pools.read.committedTinybars(), unit); // the griefer's own, still stuck
   });
@@ -301,8 +301,8 @@ describe("refundAll", () => {
     const tx = await pools.write.refundAll([0n, 0n, 10n]);
     await viem.assertions.emitWithArgs(tx, pools, "PayoutFailed", [0n, picky.address, unit]);
     await viem.assertions.balancesHaveChanged(tx, [
-      { address: buyer(0), amount: weibars(unit) },
-      { address: buyer(1), amount: weibars(unit) },
+      { address: buyer(0), amount: unit },
+      { address: buyer(1), amount: unit },
     ]);
 
     // The refusing payer is owed, not forgotten, and the pool is otherwise settled.
