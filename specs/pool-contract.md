@@ -134,7 +134,6 @@ struct Deposit {
     uint256 tinybars;
     bool    counted;        // false => late: no seat, refundable at once
     bool    refunded;
-    string  hederaTxId;     // "0.0.x@seconds.nanos" — third-party verifiable on a mirror node
 }
 ```
 
@@ -148,9 +147,17 @@ Plus, at contract level:
 | `uint256 totalCommitted` | tinybars the contract owes to a payer or a recipient |
 | `mapping(address => uint256) credit` | owed to someone whose push transfer failed |
 
-`hederaTxId` is stored as a string rather than only hashed. It costs storage and it is the
-whole verifiability argument: any reader can take it to a mirror node or HashScan and confirm
-that this payer really transferred this amount to this contract.
+`hederaTxId` is deliberately **not** in the struct. No contract logic reads it: the uniqueness
+guard hashes it straight from calldata, nothing compares it, nothing returns it. Its only
+consumers are humans and indexers, so it is emitted in `DepositRecorded` and lives there.
+Logs are part of consensus, cannot be deleted, and are exactly what the subgraph reads — while
+a 33-character Hedera transaction id is a long string, costing three storage slots to keep and
+nothing to emit.
+
+> This refines [ADR 0002](adr/0002-payment-attribution-on-hedera.md), which says the contract
+> "stores that id". The guarantee it argues for is unchanged — every recorded deposit still
+> names a real Hedera transaction that any third party can verify against a mirror node — but
+> the contract commits to it in a log rather than in state.
 
 ## The solvency invariant
 
@@ -202,6 +209,9 @@ Two notes for the subgraph mappings:
   before it. A mapping that assumes expiry has a transaction of its own will mis-order state
 - `LateDeposit` is the interesting entity, not a footnote. *A payment arrived and did not make
   it* is the event a pool page has to show, and `LateReason` says why
+- **These two events are the only record of a payment's Hedera transaction id** — it is not in
+  contract state. An index is therefore not an optimisation here; it is how the history is read
+  at all
 
 ## The flow
 
