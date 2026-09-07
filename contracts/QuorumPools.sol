@@ -128,6 +128,8 @@ contract QuorumPools {
 
     event Released(uint256 indexed poolId, address indexed recipient, uint64 tinybars);
 
+    event Refunded(uint256 indexed poolId, address indexed payer, uint256 depositId, uint64 tinybars);
+
     /**
      * @dev A state transition happened and the HBAR did not move with it. Always paired with
      *      the transition's own event - `Released` or `Refunded` - which is what a subgraph
@@ -150,6 +152,7 @@ contract QuorumPools {
     error NotDue(uint256 poolId, State state);
     error NoCredit();
     error PayoutRejected(address to, uint256 tinybars);
+    error NothingToRefund(uint256 poolId, address payer);
 
     /**
      * @notice Open a pool. Anyone may; the caller gains no authority by doing so.
@@ -297,6 +300,65 @@ contract QuorumPools {
     }
 
     /**
+     * @notice Take back every refundable deposit you hold in a pool.
+     * @dev    The trust-minimal path: the payer needs nobody's cooperation to be repaid. It
+     *         expires the pool first if the deadline has passed, so a refund never waits on
+     *         someone else having called `expire`.
+     *
+     *         The scan is over the pool's whole deposit list, because refundability is not
+     *         monotonic in index - a late deposit is refundable the moment it is recorded,
+     *         while a counted one only becomes refundable when the pool expires - so there is
+     *         no prefix that can be skipped. The caller pays for that scan, and it is bounded
+     *         by the pool's own deposit count. `refundAll` is the bounded path for the case
+     *         where that is not good enough.
+     * @return tinybars The total refunded to the caller.
+     */
+    function claimRefund(uint256 poolId) external returns (uint256 tinybars) {
+        Pool storage pool = _pool(poolId);
+        _expireIfDue(pool, poolId);
+        bool expired = pool.state == State.Expired;
+
+        Deposit[] storage deposits = _deposits[poolId];
+        uint256 total = deposits.length;
+        for (uint256 i = 0; i < total; i++) {
+            Deposit storage deposit = deposits[i];
+            if (deposit.payer != msg.sender || !_isRefundable(deposit, expired)) continue;
+            tinybars += deposit.tinybars;
+            _refundOne(poolId, i, deposit);
+        }
+
+        if (tinybars == 0) revert NothingToRefund(poolId, msg.sender);
+    }
+
+    /**
+     * @notice Push refunds out to payers, up to `maxDeposits` of them.
+     * @dev    Not a convenience. A buyer who spent their HBAR paying may not be able to afford
+     *         the gas to claim it back, so this is the path that actually runs at a failed
+     *         deadline - and it is permissionless for the same reason the rest of the outcome
+     *         is: it moves each deposit to the payer who made it, and nowhere else.
+     *
+     *         Bounded and resumable: call it until it returns zero. Already-refunded deposits
+     *         are skipped rather than cursored past, because a cursor would be wrong - late
+     *         deposits become refundable at different times from counted ones, so an index
+     *         the scan has already passed can still hold money that is now owed.
+     * @return refunded How many deposits were refunded by this call.
+     */
+    function refundAll(uint256 poolId, uint256 maxDeposits) external returns (uint256 refunded) {
+        Pool storage pool = _pool(poolId);
+        _expireIfDue(pool, poolId);
+        bool expired = pool.state == State.Expired;
+
+        Deposit[] storage deposits = _deposits[poolId];
+        uint256 total = deposits.length;
+        for (uint256 i = 0; i < total && refunded < maxDeposits; i++) {
+            Deposit storage deposit = deposits[i];
+            if (!_isRefundable(deposit, expired)) continue;
+            refunded++;
+            _refundOne(poolId, i, deposit);
+        }
+    }
+
+    /**
      * @notice Pull whatever this contract owes you after a push transfer failed.
      * @dev    The escape hatch. Nothing reaches `credit` on a path that worked.
      */
@@ -391,6 +453,39 @@ contract QuorumPools {
     function _effectiveState(Pool storage pool) private view returns (State) {
         if (pool.state == State.Open && block.timestamp >= pool.deadline) return State.Expired;
         return pool.state;
+    }
+
+    /**
+     * @dev A counted deposit is refundable only once the pool has expired - quorum was the
+     *      thing it was waiting on. A late deposit never took a seat, so it is refundable in
+     *      every state, including `Met` and `Released`.
+     */
+    function _isRefundable(Deposit storage deposit, bool expired) private view returns (bool) {
+        if (deposit.refunded) return false;
+        return expired || !deposit.counted;
+    }
+
+    /**
+     * @dev Marked refunded *before* the HBAR is sent, so a payer who reenters from their own
+     *      `receive()` finds nothing left to claim. That ordering is what makes the loops in
+     *      `claimRefund` and `refundAll` safe to send from while they are still walking.
+     */
+    function _refundOne(uint256 poolId, uint256 depositId, Deposit storage deposit) private {
+        deposit.refunded = true;
+
+        address payer = deposit.payer;
+        uint64 tinybars = deposit.tinybars;
+        emit Refunded(poolId, payer, depositId, tinybars);
+
+        if (!_payout(payer, tinybars)) {
+            _credit[payer] += tinybars;
+            emit PayoutFailed(poolId, payer, tinybars);
+        }
+    }
+
+    /// @dev Stamps a pool that is due. Refund paths call this so nobody has to call `expire`.
+    function _expireIfDue(Pool storage pool, uint256 poolId) private {
+        if (_effectiveState(pool) == State.Expired) _stampExpired(pool, poolId);
     }
 
     /// @dev Writes the stamp if it is not already there. The caller has checked it is due.
