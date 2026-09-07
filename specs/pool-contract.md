@@ -25,7 +25,7 @@ can do anything else with the funds, including the person who deployed the contr
 | Actor | Calls the contract | Authority |
 |---|---|---|
 | **Offerer** | `createPool`; receives on release | None special — it is simply the named `recipient` |
-| **Coordinator** (the resource server) | `recordDeposit` only | Per-pool. Cannot move funds, cannot change terms, cannot refund to itself |
+| **Coordinator** (the resource server) | `recordDeposit` only | Per-pool. Cannot move funds, cannot change terms, cannot reach money already attributed to another payer or pool — but see below |
 | **Buyer** | **Nothing on the happy path.** `claimRefund` only if the pool fails | Itself only |
 | **Facilitator** | Never | Off-contract: adds the fee-payer signature and submits the transfer |
 | **Deployer** | — | **Does not exist as a role.** No owner, no pause, no upgrade |
@@ -33,6 +33,15 @@ can do anything else with the funds, including the person who deployed the contr
 The buyer touching nothing is not an accident of convenience — it is what
 [ADR 0002](adr/0002-payment-attribution-on-hedera.md) forces, and it is the demo's point: a
 buyer signs one x402 payment and does nothing else.
+
+**What a coordinator can still do, stated exactly.** It can name itself as the `payer` of a
+deposit for a wrong amount, which is late on arrival and therefore refundable at once, and then
+claim it. The solvency gate in `recordDeposit` bounds that to HBAR sitting in the contract that
+no deposit has been attributed to yet, so it cannot touch another payer's money or another
+pool's — but "cannot refund to itself" would be too strong a claim, and the code disproves it in
+one call. This is the race
+[ADR 0003](adr/0003-pool-authority-model.md#the-limitation-this-accepts-coordinators-can-race-for-unattributed-funds)
+accepts and explains: one Hedera entity per pool closes it, at a cost the demo does not pay.
 
 ## Methods
 
@@ -56,18 +65,19 @@ function recordDeposit(
 function expire(uint256 poolId) external;
 function release(uint256 poolId) external;
 function claimRefund(uint256 poolId) external returns (uint256 tinybars);
-function refundAll(uint256 poolId, uint256 maxDeposits) external returns (uint256 refunded);
+function refundAll(uint256 poolId, uint256 startIndex, uint256 maxDeposits)
+    external returns (uint256 refunded);
 function withdraw() external returns (uint256 tinybars);
 ```
 
 | Method | Caller | Gate | Effect |
 |---|---|---|---|
-| `createPool` | anyone | `threshold > 0`, `unitTinybars > 0`, `deadline > block.timestamp`, non-zero addresses | Allocates `poolId`; terms are immutable thereafter |
-| `recordDeposit` | **the pool's coordinator** | `msg.sender == pool.coordinator` | Attributes one settled payment; marks `Met` and emits `ThresholdMet` when the seat count reaches the threshold. Never reverts for a buyer-side reason — [ADR 0004](adr/0004-deposits-that-cannot-be-refused.md) |
+| `createPool` | anyone | `threshold > 0`, `unitTinybars > 0`, `deadline > block.timestamp`, non-zero addresses, and `threshold * unitTinybars` fits `uint64` | Allocates `poolId`; terms are immutable thereafter |
+| `recordDeposit` | **the pool's coordinator** | `msg.sender == pool.coordinator`, non-zero `payer`, `tinybars > 0` | Attributes one settled payment; marks `Met` and emits `ThresholdMet` when the seat count reaches the threshold. Never reverts for a buyer-side reason — [ADR 0004](adr/0004-deposits-that-cannot-be-refused.md). A payment of zero is not a buyer-side reason: nothing arrived, so nothing is stranded by refusing it |
 | `expire` | anyone | pool is `Open` **and** the deadline has passed; idempotent once `Expired` | Stamps `Expired`, emits the event. **Optional** — the refund paths do it themselves |
 | `release` | anyone | pool is `Met` | Pays `recipient` the counted total, marks `Released` |
 | `claimRefund` | **the payer** | has a refundable deposit | Expires the pool if due, then sweeps every refundable deposit the caller holds |
-| `refundAll` | anyone | bounded by `maxDeposits` | Expires the pool if due, then pushes refunds for up to `maxDeposits` deposits |
+| `refundAll` | anyone | scans the window `[startIndex, startIndex + maxDeposits)` | Expires the pool if due, then pushes refunds for every refundable deposit in the window |
 | `withdraw` | anyone with credit | has credit | Escape hatch when a push transfer failed |
 
 **Due** means `state == Open && block.timestamp >= deadline`, and it is the only condition
@@ -76,8 +86,9 @@ whatever the clock says: `expire` reverts on it, and the *expires the pool if du
 `claimRefund` and `refundAll` does nothing. That is what stops a met pool's counted deposits
 from becoming refundable after quorum was already reached.
 
-Views: `statusOf`, `poolOf`, `depositCount`, `depositAt`, `committedTinybars`,
-`balanceTinybars`.
+Views: `statusOf`, `poolOf`, `poolCount`, `depositCount`, `depositAt`, `committedTinybars`,
+`balanceTinybars`. Pool ids are allocated sequentially from zero, so `poolCount` is both the
+next id and the bound on every existing one.
 
 > `statusOf` reports the **effective** status: a pool that is still `Open` when its deadline
 > passes reads as `Expired` before anyone has stamped it. Stored state and effective status
@@ -94,8 +105,27 @@ it.
 
 A buyer who spent their HBAR paying may not be able to afford the gas to claim it back.
 `claimRefund` is the trust-minimal path and `refundAll` is the one that actually runs at a
-failed deadline. It is bounded and resumable: call it repeatedly until `depositCount` is
-exhausted.
+failed deadline.
+
+It takes a **window**, `[startIndex, startIndex + maxDeposits)`, and `maxDeposits` bounds the
+deposits *examined* rather than the refunds *made* — because examining is what costs gas, and a
+bound on refunds leaves the scan itself unbounded. Drive it by advancing `startIndex` a window
+at a time until `startIndex >= depositCount`. **Not** by calling until it returns zero: an
+exhausted window returns zero while money is still owed further down the list.
+
+`startIndex` is a caller's hint, not state the contract keeps, and the distinction is the whole
+of the design. A stored cursor would be **wrong**, not merely inelegant: refundability is not
+monotonic in index — a late deposit is refundable the moment it is recorded, a counted one only
+once the pool expires — so an index the scan has already passed can hold money that is only now
+owed, and a cursor could never return for it. Skipping already-refunded deposits instead makes
+every window safe to re-scan, in any order, by anyone.
+
+The window buys one thing a scan fixed at zero could not. Payouts forward all remaining gas (a
+2300-gas stipend would break any payer that is itself a contract), so a payer whose `receive()`
+burns gas takes 63/64 of the frame; sitting at a low index, it would starve every call that had
+to begin at zero, and the refund path that exists precisely for buyers who cannot pay gas would
+be the one a griefer could close. A caller can now step over it. That payer's own deposit stays
+stuck, which is the right place for the cost to land.
 
 ## State
 
@@ -223,7 +253,7 @@ Every state transition emits, so a subgraph reconstructs full pool state with no
 
 ```solidity
 event PoolCreated(uint256 indexed poolId, address indexed coordinator, address indexed recipient,
-                  uint256 unitTinybars, uint32 threshold, uint64 deadline, string resourceUrl);
+                  uint64 unitTinybars, uint32 threshold, uint64 deadline, string resourceUrl);
 event DepositRecorded(uint256 indexed poolId, address indexed payer, uint256 depositId,
                       uint64 tinybars, string hederaTxId, uint32 seatsAfter);
 event LateDeposit(uint256 indexed poolId, address indexed payer, uint256 depositId,
@@ -295,7 +325,7 @@ sequenceDiagram
         P-->>G: PoolExpired (if not already stamped)
         P->>B: refund
         P-->>G: Refunded
-        RS->>P: refundAll(poolId, max)
+        RS->>P: refundAll(poolId, start, window)
         P->>B: refund the rest
     end
 ```
@@ -319,13 +349,25 @@ the party watching. All three are permissionless.
 
 Minutes each, and the first one can invalidate the design.
 
-1. 🔴 **Will the facilitator accept a `payTo` that is a contract, not an account?** If Blocky402
-   validates `payTo` as an account entity and rejects a contract id, then
-   [ADR 0002](adr/0002-payment-attribution-on-hedera.md)'s Option A does not work and the
-   attribution decision reopens. **Test this before anything else.**
-2. Does a native `CryptoTransfer` credit a contract account on testnet, with no receiver
-   signature and no code executed? Extend the preflight in [`scripts/check-env.ts`](../scripts/check-env.ts).
-3. Confirm the weibar conversion empirically with one throwaway payout, before the refund
-   arithmetic depends on it.
-4. Does subgraph indexing reach Hedera testnet contracts, and through whose graph-node? The
-   Graph integration rests on it.
+1. ✅ **Will the facilitator accept a `payTo` that is a contract, not an account?**
+   **Verified on testnet 2026-09-07.** `/verify` accepted it, `/settle` moved 0.1 HBAR into
+   contract `0.0.10407447` (`0.0.7162784@1788790885.988213434`), and the mirror node shows the
+   balance change. [ADR 0002](adr/0002-payment-attribution-on-hedera.md)'s Option A holds.
+   Re-runnable: [`scripts/check-contract-payto.ts`](../scripts/check-contract-payto.ts).
+2. ✅ **Does a native `CryptoTransfer` credit a contract account, with no receiver signature
+   and no code executed?** **Verified in the same settlement.** The mirror node records it as
+   `CRYPTOTRANSFER`/`SUCCESS`, and `/api/v1/contracts/results/<txId>` returns 404 — there is
+   no contract result, because no contract code ran. This is what
+   [ADR 0004](adr/0004-deposits-that-cannot-be-refused.md) rests on: there was no moment at
+   which the payment could have been rejected.
+3. ⬜ **Confirm the weibar conversion empirically with one throwaway payout.** *Still open, and
+   the refund arithmetic depends on it — but on a narrower question than this item first
+   claimed.* The tests define their own `TINYBAR_TO_WEIBAR` in `test/helpers.ts`, independent of
+   the contract's, and assertions that compare a contract-reported tinybar figure against a
+   test-computed weibar one do pin the two together. So the suite *does* catch a wrong constant
+   in the contract. What it cannot catch is both being wrong the same way — that `1 tinybar =
+   1e10 weibar` is Hedera's real ratio and not merely ours. That is documented rather than
+   guessed (1 HBAR = 1e8 tinybar = 1e18 weibar), and one real payout from a deployed contract
+   converts it from documented to observed.
+4. ⬜ **Does subgraph indexing reach Hedera testnet contracts, and through whose graph-node?**
+   Still open. The Graph integration rests on it.
