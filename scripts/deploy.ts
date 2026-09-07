@@ -7,8 +7,11 @@
  * return an EVM address and leave the entity id to be looked up afterwards.
  *
  * The contract is created with NO ADMIN KEY. That is the deployment expressing what ADR 0003
- * decided: nobody owns this contract, so nobody may update or delete it. It is also
- * irreversible - a contract created without an admin key can never be given one.
+ * decided: nobody owns this contract, so nobody may update or delete it - and it is
+ * irreversible, because a contract created without an admin key can never be given one.
+ * Hedera records that as the contract being its own administrator rather than as an absent
+ * key, which is the same thing said differently: the only key that could authorise an update
+ * belongs to a contract with no code to sign with it.
  *
  * Run: npm run build && npm run deploy
  */
@@ -16,7 +19,9 @@ import { Client, ContractCreateFlow, Hbar, AccountId, PrivateKey } from "@hiero-
 import { caip2, loadConfig } from "../src/config.js";
 import {
   CONTRACT_NAME,
+  adminKeyKind,
   codeHashOf,
+  fetchDeployedContract,
   readArtifact,
   readDeployment,
   writeDeployment,
@@ -57,29 +62,6 @@ function parseArgs(argv: string[]): Args {
     }
   }
   return args;
-}
-
-interface MirrorContract {
-  evm_address?: string;
-  runtime_bytecode?: string;
-  admin_key?: unknown;
-}
-
-/**
- * Read the contract back from the mirror node. The receipt says a contract id was created;
- * only the runtime bytecode says *which* contract it is, and the ingestion lag means it is
- * not there the instant the receipt arrives.
- */
-async function fetchDeployedContract(mirrorUrl: string, contractId: string): Promise<MirrorContract> {
-  for (let attempt = 1; attempt <= 12; attempt++) {
-    const res = await fetch(`${mirrorUrl}/api/v1/contracts/${contractId}`);
-    if (res.ok) {
-      const body = (await res.json()) as MirrorContract;
-      if (body.runtime_bytecode) return body;
-    }
-    await new Promise((r) => setTimeout(r, 1500));
-  }
-  throw new Error(`mirror node never returned runtime bytecode for ${contractId}`);
 }
 
 async function main(): Promise<number> {
@@ -157,11 +139,12 @@ async function main(): Promise<number> {
       info(`on chain ${actualCodeHash}`);
       failures++;
     }
-    if (onChain.admin_key == null) {
-      ok("no admin key - the contract cannot be updated or deleted by anyone");
-    } else {
-      bad("the contract has an admin key, which ADR 0003 says it must not");
+    const admin = adminKeyKind(onChain, contractId.toString());
+    if (admin === "external") {
+      bad("an external key can update or delete this contract, which ADR 0003 says must not exist");
       failures++;
+    } else {
+      ok(`admin key: ${admin} - nobody outside the contract can update or delete it`);
     }
 
     const evmAddress = onChain.evm_address ?? `0x${contractId.toEvmAddress()}`;
