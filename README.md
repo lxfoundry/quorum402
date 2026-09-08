@@ -18,7 +18,7 @@ Built from scratch for [ETHOnline 2026](https://ethglobal.com/events/ethonline20
 ## The gap this fills
 
 [x402](https://x402.org) turns HTTP `402 Payment Required` into a real payment handshake.
-Its schemes today all describe **one payer settling one request**:
+As of 2026-09-08 its schemes all describe **one payer settling one request**:
 
 | Scheme | Semantics |
 |---|---|
@@ -30,11 +30,11 @@ Its schemes today all describe **one payer settling one request**:
 None of them expresses **"I will pay if enough others do."** That is a different shape: many
 distinct payers, one resource, an all-or-nothing outcome, and a refund path when the crowd does
 not show up. `auth-capture` comes closest and still cannot — its release is the seller's choice,
-not a fact about who else turned up. [The scheme spec §1](specs/quorum-scheme.md) makes that
+not a fact about who else turned up. [The scheme spec §1](specs/quorum-scheme.md#1-what-x402-does-not-express-as-of-2026-09-08) makes that
 comparison precisely.
 
 `quorum402` proposes that missing shape as a scheme named **`quorum`**. What is built of it is
-stated per hold binding in [§10](specs/quorum-scheme.md).
+stated per hold binding in [§10](specs/quorum-scheme.md#10-hold-bindings).
 
 The same mechanism covers minimum-participant offers (a trip that runs at 20 travellers),
 tiered group buying (the price falls as the pool fills), and all-or-nothing crowdfunding.

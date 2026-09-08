@@ -18,7 +18,7 @@ binding interface, and specifies one binding in full: `exact` on Hedera, over a 
 
 ---
 
-## 1. What x402 cannot express today
+## 1. What x402 does not express as of 2026-09-08
 
 As of 2026-09-08 the specification defines four schemes — `exact`, `upto`, `batch-settlement` and
 `auth-capture` — and each describes **one payer settling one request**.
@@ -376,7 +376,7 @@ A hold binding answers one question: how is one payer's money held between commi
 
 | Binding | Status here | Status upstream |
 |---|---|---|
-| `exact` + pool contract | **Implemented and demonstrated** | Merged; 17 network bindings |
+| `exact` + pool contract | **Hold and settlement built and demonstrated on testnet.** The coordinator implementing §6–§8 is specified here, not yet written | Merged; 17 network bindings |
 | `auth-capture` | Not built | Merged; **EVM only** |
 | `escrow` | Not built | **Proposed, open** |
 
@@ -502,7 +502,7 @@ Read on **2026-09-08** from `x402-foundation/x402` at `main`:
 
 | Source | Used for |
 |---|---|
-| `specs/x402-specification-v2.md` | `PaymentRequirements` fields; §6 scheme definition; §6.1 payment flows, the reserved-key rule and the client skip rule; `SettlementResponse` schema |
+| `specs/x402-specification-v2.md` | `PaymentRequirements` fields; §6 scheme definition; §6.1 payment flows, the reserved-key rule and the client skip rule; `SettlementResponse` schema; §9 error handling, for `settlement_pending` as a non-terminal `errorReason` carrying a non-empty `transaction` |
 | `specs/transports-v2/http.md` | `PAYMENT-REQUIRED` / `PAYMENT-SIGNATURE` / `PAYMENT-RESPONSE` headers; the status-code mapping; response bodies as a server concern |
 | `specs/schemes/exact/scheme_exact.md` | `upfront`'s no-refund statement; asset transfer method families |
 | `specs/schemes/exact/scheme_exact_hedera.md` | The Hedera binding: payload shape, `SettlementResponse.payer` as the fee payer, facilitator verification rules |
