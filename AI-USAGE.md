@@ -115,7 +115,7 @@ script's check for "nobody owns this contract" was written as `admin_key == null
 failed a deployment that was correct: Hedera does not record the absence of an admin key, it
 records the contract as its own administrator. The verdict was wrong in the worse direction —
 it called a good deployment bad, which is survivable — but the habit behind it is the same one
-this file already records twice today: writing down a property the evidence had not been
+this file already records under 2026-09-07: writing down a property the evidence had not been
 checked for. The fix names three cases and fails only on the one ADR 0003 cares about, an
 admin key held *outside* the contract.
 
@@ -128,10 +128,10 @@ contract holding less than 100,000 HBAR — and nothing local could see it, beca
 define their own copy of the constant and cross it against the contract's. That comparison can
 only ever show that this repository agrees with itself.
 
-It is the day's fourth instance of one shape: a claim written down, then built on, without the
-evidence for it ever being fetched. The first three were prose overstating what the code did.
-This one ran the other way - prose the code obeyed - and it is the more dangerous direction,
-because the code cannot disagree with a premise it was derived from.
+It is another instance of one shape: a claim written down, then built on, without the
+evidence for it ever being fetched. The earlier entries that day were prose overstating what the
+code did. This one ran the other way - prose the code obeyed - and it is the more dangerous
+direction, because the code cannot disagree with a premise it was derived from.
 
 What broke the loop was a check against something nobody here wrote: one real payment, on the
 real network, and the contract's own reverts as the evidence. Worth noting that the check
@@ -163,16 +163,31 @@ while specifying the redemption path, not by reasoning about the rule.
 The single-payer script never had to confront this, because it already knew who the buyer was.
 The rule now derives the payer from the signed transfer itself.
 
-**2026-09-08 — a diagram written yesterday used the previous protocol version's header.** The
+**2026-09-08 — a diagram written 2026-09-07 used the previous protocol version's header.** The
 flow in `specs/pool-contract.md` had the buyer retrying with `X-PAYMENT`, which is x402 v1; v2
 uses `PAYMENT-SIGNATURE`. The same diagram gave a settled-but-undelivered payment a 200. Both
 were written from recall rather than from the transport document, and both were found by opening
 it.
 
-All three are the same shape as the four entries above them, and the shape is now worth naming
-outright: **this tool states things about external specifications fluently and from memory, and
-the fluency is uncorrelated with whether the document says it.** Every one was caught by fetching
-the source; none was caught by thinking harder about it.
+**2026-09-08 — invented a fact about the ecosystem while fixing a different problem.** A cleanup
+review correctly found that §10.3 of the scheme spec justified the `escrow` binding's absence less
+well than §10.2 justified `auth-capture`'s — it described what `escrow` was without ever saying
+why it was unbuilt, leaving "they ran out of time" as the only available inference. Filling that
+gap, the model wrote that `escrow` has "no facilitator serving it". It has one: Boson Protocol's
+x402B serves the scheme on Base. Nothing was checked; a reason that sounded right was supplied for
+a gap that was real.
+
+Two things make it worth keeping. The correction is *stronger* than the invention — the honest
+reason is that the format is unmerged and its facilitator settles on Base rather than Hedera,
+which is the same feasibility wall `auth-capture` hits from the other side. And it needed a
+disclosure the invention did not: that facilitator is the proposal author's own, so a reader told
+only that "a facilitator serves `escrow`" would take it for independent uptake. Caught by the
+human, who wrote the facilitator.
+
+The 2026-09-08 entries above are the same shape as the ones before them, and the shape is now
+worth naming outright: **this tool states things about external specifications fluently and from
+memory, and the fluency is uncorrelated with whether the document says it.** Every one was caught
+by fetching the source; none was caught by thinking harder about it.
 
 ## 6. Review, and what it caught
 
