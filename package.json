@@ -21,11 +21,13 @@
     "check:payto": "tsx scripts/check-contract-payto.ts",
     "deploy": "tsx scripts/deploy.ts",
     "pool:open": "tsx scripts/open-pool.ts",
+    "pool:release": "tsx scripts/release-pool.ts",
     "check:deployment": "tsx scripts/check-deployment.ts",
     "check:payout": "tsx scripts/check-payout.ts",
     "record": "tsx scripts/record-deposit.ts",
     "server": "tsx src/server/index.ts",
     "pay": "tsx scripts/pay-once.ts",
+    "buy": "tsx scripts/buy-seat.ts",
     "subgraph:config": "tsx scripts/subgraph-config.ts"
   },
   "dependencies": {
