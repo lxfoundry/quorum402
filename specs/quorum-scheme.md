@@ -384,21 +384,28 @@ would bind to it much as it binds to `auth-capture`, with the hold contract-medi
 unspecified.
 
 > **Disclosure.** `escrow` (x402-foundation/x402#2222) is a proposal authored by this project's
-> author on behalf of Boson Protocol, and remains open. It is cited here as one of two candidate
-> hold bindings, not as settled standard. Its content is referenced; no text or code from the
-> associated repositories is reused in this project.
+> author on behalf of Boson Protocol, and remains open. The x402B facilitator that serves it on
+> Base is Boson Protocol's as well — so a facilitator existing for `escrow` is not independent
+> ecosystem uptake, and is not offered here as evidence that the proposal is settled. It is cited
+> as one of two candidate hold bindings, not as settled standard, and its `nextActions` shape
+> informs the receipt in §6.1. Its content is referenced; no text or code from the associated
+> repositories is reused in this project.
 
 Its `nextActions` envelope — a server telling a client what to do next without the client
 hard-coding state transitions — is close in shape to what a quorum coordinator must express, and
 the receipt's `next` array in §6.1 is built on that idea.
 
+What is unproven: the proposal is not merged, so the wire format it standardises can still move,
+and the facilitator that serves it — Boson Protocol's x402B — settles on Base, not the network
+this project settles on. Composing over it would mean specifying against an unmerged format *and*
+demonstrating on a second network. That is the same feasibility wall as `auth-capture`, reached
+from the other side, and it is not a judgement on the design.
+
 ### 10.4 Why exactly three
 
-`auth-capture` and `escrow` are competing answers to one question: whether the hold mechanism
-belongs inside the scheme, or behind a wire format that leaves it implementation-defined. A
-`quorum` that binds cleanly to both is orthogonal to the axis the ecosystem is currently
-contesting — it survives either outcome. One binding would only illustrate that; a fourth would
-add nothing the first three have not already established.
+The two unbuilt bindings take opposite positions on where the hold belongs, so binding cleanly to
+both is what shows `quorum` is orthogonal to that axis rather than dependent on either answer. The
+reasoning, and the evidence behind it, is [ADR 0001](adr/0001-what-quorum-binds-to.md).
 
 ## 11. Limitations
 
