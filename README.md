@@ -67,6 +67,9 @@ Design decisions are recorded as they are made:
 - [ADR 0005 — What `quorum` declares on the wire](specs/adr/0005-what-quorum-declares-on-the-wire.md)
   — why the coordination is a scheme rather than a field, why it proposes a payment flow as well,
   and why a plain `exact` entry sits alongside it
+- [ADR 0006 — Nothing settles until recording can succeed](specs/adr/0006-nothing-settles-until-recording-can-succeed.md)
+  — what the server checks before it calls the irreversible step, why the solvency guard makes
+  that affordable, and where a failed attribution gets written down
 
 The contract those decisions describe is specified in
 [specs/pool-contract.md](specs/pool-contract.md), written before the code, and implemented in
