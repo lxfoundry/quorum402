@@ -359,6 +359,12 @@ export function handleRefunded(event: Refunded): void {
 
 export function handlePayoutFailed(event: PayoutFailed): void {
   const p = protocol(event.block);
+  const poolId = event.params.poolId;
+  const pool = Pool.load(poolId.toString());
+  if (pool == null) {
+    log.critical("PayoutFailed for pool {}, which was never created", [poolId.toString()]);
+    return;
+  }
   const tinybars = event.params.tinybars;
 
   // One transition can strand money for several addresses - a refund sweep pushes to many -
@@ -366,7 +372,7 @@ export function handlePayoutFailed(event: PayoutFailed): void {
   const failure = new PayoutFailure(
     event.transaction.hash.toHexString() + "-" + event.logIndex.toString(),
   );
-  failure.pool = event.params.poolId.toString();
+  failure.pool = pool.id;
   failure.to = event.params.to;
   failure.tinybars = tinybars;
   failure.at = event.block.timestamp;
