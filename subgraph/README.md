@@ -78,13 +78,16 @@ one that documents where it differs.
 npm install
 npm run up                       # graph-node, IPFS and postgres
 
-# from the repo root, once - writes subgraph.yaml and abis/ from the deployment record
-cd .. && npm run build && npm run subgraph:config && cd subgraph
-
 npm run codegen
 npm run create-local
 npm run deploy-local
 ```
+
+Nothing there needs the root project. [`subgraph.yaml`](subgraph.yaml) and [`abis/`](abis) are
+generated but committed, so they are already correct for the deployed contract. Regenerate them
+only after deploying a new one — from the repo root, `npm run build && npm run subgraph:config`,
+which rewrites both from the compiled artifact and the deployment record. CI re-runs it and
+fails if what is committed has drifted.
 
 Then:
 
