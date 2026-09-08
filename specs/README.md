@@ -39,7 +39,7 @@ concrete to land.
 
 | Spec | What it covers |
 |---|---|
-| [quorum-scheme.md](quorum-scheme.md) | The `quorum` scheme: what x402 cannot express today, the proposed `conditional` payment flow, the requirement and payload shapes, the HTTP lifecycle, entitlement, reversal, and the three hold bindings |
+| [quorum-scheme.md](quorum-scheme.md) | The `quorum` scheme: what x402 did not express as of 2026-09-08 (§1), the proposed `conditional` payment flow, the requirement and payload shapes, the HTTP lifecycle, entitlement, reversal, and the three hold bindings |
 | [pool-contract.md](pool-contract.md) | Roles and authority, methods, state machine, events and the solvency invariant of the contract that holds a pool's funds |
 
 ## Conventions

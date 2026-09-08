@@ -1,7 +1,7 @@
 # The `quorum` scheme
 
-> **Status:** proposed here, implemented here, not upstream. Written 2026-09-08, before the code
-> it specifies.
+> **Status:** proposed here, not upstream. Written 2026-09-08, before the code it specifies. What
+> is built is stated per hold binding in §10, and claimed nowhere else.
 >
 > Sources for every quotation of the x402 specification are listed in §13, with the date they
 > were read.

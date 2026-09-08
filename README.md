@@ -25,12 +25,16 @@ Its schemes today all describe **one payer settling one request**:
 | `exact` | Buyer authorises the advertised amount |
 | `upto` | Buyer authorises a ceiling; seller settles actual usage |
 | `batch-settlement` | One buyer's repeated micropayments accumulate against a reusable channel |
+| `auth-capture` | Buyer's funds are held, then captured or released at the seller's discretion |
 
-None of them can express **"I will pay if enough others do."** That is a different shape:
-many distinct payers, one resource, an all-or-nothing outcome, and a refund path when the
-crowd does not show up.
+None of them expresses **"I will pay if enough others do."** That is a different shape: many
+distinct payers, one resource, an all-or-nothing outcome, and a refund path when the crowd does
+not show up. `auth-capture` comes closest and still cannot — its release is the seller's choice,
+not a fact about who else turned up. [The scheme spec §1](specs/quorum-scheme.md) makes that
+comparison precisely.
 
-`quorum402` proposes and implements that missing shape as a scheme named **`quorum`**.
+`quorum402` proposes that missing shape as a scheme named **`quorum`**. What is built of it is
+stated per hold binding in [§10](specs/quorum-scheme.md).
 
 The same mechanism covers minimum-participant offers (a trip that runs at 20 travellers),
 tiered group buying (the price falls as the pool fills), and all-or-nothing crowdfunding.
@@ -68,10 +72,10 @@ The contract those decisions describe is specified in
 [specs/pool-contract.md](specs/pool-contract.md), written before the code, and implemented in
 [contracts/QuorumPools.sol](contracts/QuorumPools.sol).
 
-The scheme itself is specified in [specs/quorum-scheme.md](specs/quorum-scheme.md): what x402
-cannot express today, the `conditional` payment flow it proposes, the wire format, the HTTP
-lifecycle, how entitlement is proven from chain state, and the three hold bindings — of which
-one is built.
+The scheme itself is specified in [specs/quorum-scheme.md](specs/quorum-scheme.md): what x402 did
+not express as of 2026-09-08 (§1), the `conditional` payment flow it proposes, the wire format,
+the HTTP lifecycle, how entitlement is proven from chain state, and the three hold bindings — of
+which one is built.
 
 ---
 
@@ -121,8 +125,8 @@ be verified without reading the whole tree.
 
 ## Running it
 
-TODO — verified from a clean clone before submission. Prerequisites, install, configure,
-deploy to testnet, run the demo.
+TODO — prerequisites, install, configure, deploy to testnet, run the demo. Verified from a clean
+clone, not from a developer's machine.
 
 ```bash
 # TODO
