@@ -48,6 +48,7 @@ was rejected.
 | 2026-09-08 | Hosting on Fly.io (`subgraph/fly/`) | Diagnosed the IPv4/IPv6 split and the Postgres collation and memory failures, and wrote the deployment configs and the split deploy path | Chose to self-host publicly rather than leave the index on a laptop, and refused the shortcut of publishing graph-node's unauthenticated admin port to make deployment easier |
 | 2026-09-08 | `specs/quorum-scheme.md` and ADR 0005 | Read the x402 v2 specification, its HTTP transport and the `exact` scheme documents, then drafted the scheme spec and the decision record against them | Set the design in a question-by-question session before a line was written: that a legacy `exact` client must still be able to pay, that entitlement is derived from chain state rather than held in a session, that pools are opened by the seller and never by the server, and that the scheme nests its hold binding rather than referencing it |
 | 2026-09-08 | ADR 0006 and the coordinator's payment leg (`src/server/`) | Found that the solvency guard's arithmetic cancels, so every `recordDeposit` precondition can be checked before the irreversible step; wrote the pool registry, the requirement builders, the payer derivation and the preflight gate, with tests at each boundary | Set the rule the design had to satisfy — that every condition for recording must hold *before* settle is relayed — and rejected the first design's post-settlement balance polling. Chose an HCS topic over a private failure store, on the grounds that the coordinator's own failures should not be the only events nobody else can audit |
+| 2026-09-08 | The coordinator over HTTP (`src/server/index.ts`, `src/buyer/agent.ts`) | Wrote the §6 lifecycle, the receipt, the buyer that answers a 402 on its own, and tests driving every status-table row over a real listening server with the chain stubbed | Approved the testnet spend and set its bound. Called for a seller account distinct from the coordinator, which ADR 0003 assumes and a pool paying its own coordinator would not have shown |
 
 ## 4. What was done without AI
 
@@ -252,6 +253,17 @@ new branch, which would have put unrelated server code inside a decision record'
 was caught before pushing, so the fix needed no history rewriting — but the reason it was
 available is luck of timing, not process. Branching is the step that is easiest to skip when
 the work feels continuous, and it is exactly then that it matters.
+
+**2026-09-08 — wrote the mirror-lag mistake into a script hours after writing the ADR against
+it.** ADR 0006 says, at length, that mirror ingestion lags consensus and that the recording path
+must not pace itself against it. The release script written the same evening then read the
+contract's balance from the mirror node immediately after the payout and printed
+`300000000 -> 300000000` — the pre-transfer figure, which reads exactly like a payout that did
+not happen. The money had moved; five seconds later the same query showed the contract at zero
+and the seller up by three HBAR. `check-payout.ts` had already solved this with a polling helper,
+which the new script did not use because nothing pointed at it. Knowing a fact well enough to
+write it down twice is not the same as applying it, and the failure mode of that gap is a script
+that reports the opposite of what happened.
 
 ## 6. Review, and what it caught
 
