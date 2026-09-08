@@ -305,7 +305,7 @@ sequenceDiagram
         RS->>P: recordDeposit(poolId, payerEvm, unit, hederaTxId)
         Note over P: solvency, tx-id uniqueness,<br/>seat and deadline resolved here
         P-->>G: DepositRecorded — or LateDeposit
-        RS-->>B: 202 + receipt — resource withheld until quorum
+        RS-->>B: 202 + receipt — withheld until quorum<br/>(200 + resource if this payment meets it)
     end
 
     alt threshold reached before the deadline
@@ -332,6 +332,10 @@ sequenceDiagram
 
 `release`, `expire` and `refundAll` are drawn as the resource server's calls only because it is
 the party watching. All three are permissionless.
+
+The wire format and the full status mapping are specified in
+[quorum-scheme.md](quorum-scheme.md) §6, which owns them; this diagram shows only where the
+contract sits in that flow.
 
 ## Hedera specifics the implementation must get right
 

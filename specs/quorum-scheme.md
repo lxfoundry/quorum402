@@ -328,6 +328,9 @@ If the deadline passes without the threshold being met, every payer is owed thei
 - Any payer can reclaim their own funds directly from the hold, without the server.
 - Anyone at all can push refunds to every payer in a failed pool — including the seller, a
   bystander, or a payer who cannot afford the gas to claim.
+- A push that the payer's account rejects leaves the amount as credit they can pull later, so a
+  failed transfer strands nothing. Under the `exact` binding these are `claimRefund`, `refundAll`
+  and `withdraw` — [pool-contract.md](pool-contract.md).
 
 Putting reversal behind the resource server would make the refund depend on the liveness of the
 party whose failure the payer most needs protection from. A `conditional` flow whose reversal
