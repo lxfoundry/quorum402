@@ -119,6 +119,35 @@ function varint(value: number): number[] {
   return bytes;
 }
 
+/** One component of an entity id: decimal digits, and small enough for `varint` to stay exact. */
+function entityPart(part: string, entityId: string): number {
+  const value = Number(part);
+  if (!/^\d+$/.test(part) || !Number.isSafeInteger(value)) {
+    throw new Error(`not a Hedera entity id: "${entityId}" - "${part}" is not a whole number`);
+  }
+  return value;
+}
+
+/**
+ * `0.0.1234` -> `{ shard: 0, realm: 0, num: 1234 }`, rejecting anything else.
+ *
+ * Strict deliberately. `varint` assumes a non-negative integer and will encode NaN or a
+ * fraction into bytes regardless, producing a key that matches nothing - so a malformed id
+ * would be reported as an `external` admin key, the one answer that means something is wrong
+ * with the contract, when what is actually wrong is the argument.
+ */
+function parseEntityId(entityId: string): { shard: number; realm: number; num: number } {
+  const [shard, realm, num, ...rest] = entityId.split(".");
+  if (shard === undefined || realm === undefined || num === undefined || rest.length > 0) {
+    throw new Error(`not a Hedera entity id: "${entityId}" - expected shard.realm.num, e.g. 0.0.1234`);
+  }
+  return {
+    shard: entityPart(shard, entityId),
+    realm: entityPart(realm, entityId),
+    num: entityPart(num, entityId),
+  };
+}
+
 /**
  * The protobuf `Key` a contract holds when it is its own administrator, hex encoded the way
  * the mirror node returns `admin_key.key`.
@@ -129,7 +158,7 @@ function varint(value: number): number[] {
  * - which is why a `0.0.x` contract encodes to five bytes.
  */
 export function selfAdminKeyHex(contractId: string): string {
-  const [shard = 0, realm = 0, num = 0] = contractId.split(".").map(Number);
+  const { shard, realm, num } = parseEntityId(contractId);
   const id: number[] = [];
   if (shard) id.push(0x08, ...varint(shard));
   if (realm) id.push(0x10, ...varint(realm));
