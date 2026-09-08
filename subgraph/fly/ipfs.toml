@@ -1,0 +1,32 @@
+# The IPFS node graph-node reads subgraph manifests, schemas and WASM from.
+#
+# Deliberately has no [http_service] and no public ports: the kubo API can add, pin and
+# garbage-collect, and it has no authentication of its own. It is reachable only from inside
+# the organisation's private network, which is all graph-node needs.
+#
+#   fly deploy -c subgraph/fly/ipfs.toml
+app = "quorum402-ipfs"
+primary_region = "ams"
+
+[build]
+  image = "ipfs/kubo:v0.17.0"
+
+[env]
+  # Disables local-network peer discovery, which on a datacenter host finds nothing and
+  # annoys the neighbours.
+  IPFS_PROFILE = "server"
+
+# See the script's own header - Fly's private network is IPv6 and kubo defaults to IPv4.
+[[files]]
+  guest_path = "/container-init.d/001-bind-ipv6.sh"
+  local_path = "ipfs-bind-ipv6.sh"
+
+[mounts]
+  source = "ipfs_data"
+  destination = "/data/ipfs"
+
+# graph-node re-reads the manifest from IPFS every time a subgraph starts, so this node going
+# away takes the subgraph with it on the next restart. It stays up.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
