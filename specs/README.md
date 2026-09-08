@@ -31,6 +31,7 @@ wrong gets a new ADR that supersedes it, rather than a quiet edit.
 | [0003](adr/0003-pool-authority-model.md) | Who may do what to a pool | 2026-09-07 | Accepted |
 | [0004](adr/0004-deposits-that-cannot-be-refused.md) | Deposits that cannot be refused | 2026-09-07 | Accepted |
 | [0005](adr/0005-what-quorum-declares-on-the-wire.md) | What `quorum` declares on the wire | 2026-09-08 | Accepted |
+| [0006](adr/0006-nothing-settles-until-recording-can-succeed.md) | Nothing settles until recording can succeed | 2026-09-08 | Accepted |
 
 ## Component specs
 
