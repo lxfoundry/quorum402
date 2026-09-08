@@ -116,7 +116,9 @@ authority on seat count is the hold binding's own state.
 ```jsonc
 {
   "x402Version": 2,
-  "resource": { "url": "https://example.test/resource/7" },
+  // ResourceDescriptor — url, description and mimeType are all required
+  "resource": { "url": "https://example.test/resource/7", "description": "…", "mimeType": "…" },
+  // the §3 entry echoed back, minus the advisory `filled`, which a client MAY omit
   "accepted": {
     "scheme": "quorum",
     "network": "hedera:testnet",
@@ -160,6 +162,7 @@ A `PaymentRequired` for a quorum-gated resource SHOULD carry a second `accepts[]
 the **same payment** under its hold binding's own scheme:
 
 ```jsonc
+// identical to the §3 entry except `scheme` and `extra`
 {
   "scheme": "exact",
   "network": "hedera:testnet",
@@ -350,7 +353,10 @@ contract, its authority model and its solvency invariant are specified in
 [pool-contract.md](pool-contract.md), and the reason attribution needs a deliberate mechanism on
 Hedera is [ADR 0002](adr/0002-payment-attribution-on-hedera.md).
 
-Deployed for this project at `0.0.10409980` on Hedera testnet.
+Deployed for this project on Hedera testnet; the address and its verification are recorded in
+[deployments/hedera-testnet.json](../deployments/hedera-testnet.json), which is the source of
+truth. Account ids in this document's examples are illustrative — a client resolves `payTo` from
+the requirement it was served, and `extra.feePayer` from the facilitator's `/supported`.
 
 ### 10.2 `auth-capture` — not built
 
