@@ -70,7 +70,7 @@ refusing.** A flow that promises reversal should spend its cheap refusal before 
 A `conditional` scheme MUST define that remedy. §9 defines `quorum`'s.
 
 `extra.paymentFlow` is a protocol-reserved key, so a new value is a specification-level proposal
-and is made as one. It is not a private string this implementation happens to emit.
+and is made as one — see [ADR 0005](adr/0005-what-quorum-declares-on-the-wire.md).
 
 ## 3. `PaymentRequirements` for `quorum`
 
@@ -333,7 +333,8 @@ requires a cooperative server has not defined a remedy; it has named one.
 ## 10. Hold bindings
 
 A hold binding answers one question: how is one payer's money held between commitment and outcome?
-`quorum` names three and builds one.
+`quorum` names three and builds one; why three, and why these three, is
+[ADR 0001](adr/0001-what-quorum-binds-to.md).
 
 | Binding | Status here | Status upstream |
 |---|---|---|
@@ -392,16 +393,12 @@ add nothing the first three have not already established.
 
 ## 11. Limitations
 
-- **Attribution depends on the coordinator's liveness under the `exact` binding.** A native Hedera
-  transfer executes no contract code, so a payment that settles must be recorded by the
-  coordinator in a separate call. If it never is, the funds sit in the contract unattributed:
-  stranded rather than stolen — no party can withdraw them, including the seller and the deployer
-  — but out of the payer's reach too, because a contract cannot read a transaction record to prove
-  the payment happened. The design trusts the coordinator for liveness, never for integrity: a
+- **Attribution depends on the coordinator's liveness under the `exact` binding**, and an
+  unrecorded deposit is stranded rather than stolen ([ADR 0002](adr/0002-payment-attribution-on-hedera.md),
+  [ADR 0003](adr/0003-pool-authority-model.md), §12). The trust is for liveness, never integrity: a
   recorded deposit always names a real settled transaction, so deposits can be omitted but never
   invented, and a threshold cannot be crossed without real money behind it. Recording late still
-  works and still refunds, so only permanent coordinator failure is permanent. See
-  [ADR 0002](adr/0002-payment-attribution-on-hedera.md) and §12.
+  works and still refunds, so only permanent coordinator failure is permanent.
 - **`filled` is stale by construction**, and a payer can pay for a seat that has just been taken.
   That payment is recorded, not counted, and refundable at once — correct, but it costs the payer a
   transaction fee and a round trip.
