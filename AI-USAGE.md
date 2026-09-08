@@ -46,6 +46,7 @@ was rejected.
 | 2026-09-07 | Lint and CI (`.github/workflows/ci.yml`) | Wrote the ESLint and solhint configs and the workflow, and ran both linters over the tree to find what they flagged | Decided that warnings fail the run, and that the three the test fixtures raise are turned off at the line with a reason rather than repo-wide; kept the Solidity line-length limit off the contract |
 | 2026-09-08 | The subgraph (`subgraph/`) | Read both sides of the hosting question - The Graph's supported-networks list and Hedera's own docs - then wrote the schema, the mappings and the graph-node configuration, and ran it against testnet until it returned the real pools | Set the question the mappings had to answer: what does the contract deliberately not keep. Rejected the first schema for calling the account entity `Payer`, which is wrong for a recipient credited by a failed payout |
 | 2026-09-08 | Hosting on Fly.io (`subgraph/fly/`) | Diagnosed the IPv4/IPv6 split and the Postgres collation and memory failures, and wrote the deployment configs and the split deploy path | Chose to self-host publicly rather than leave the index on a laptop, and refused the shortcut of publishing graph-node's unauthenticated admin port to make deployment easier |
+| 2026-09-08 | `specs/quorum-scheme.md` and ADR 0005 | Read the x402 v2 specification, its HTTP transport and the `exact` scheme documents, then drafted the scheme spec and the decision record against them | Set the design in a question-by-question session before a line was written: that a legacy `exact` client must still be able to pay, that entitlement is derived from chain state rather than held in a session, that pools are opened by the seller and never by the server, and that the scheme nests its hold binding rather than referencing it |
 
 ## 4. What was done without AI
 
@@ -116,7 +117,7 @@ script's check for "nobody owns this contract" was written as `admin_key == null
 failed a deployment that was correct: Hedera does not record the absence of an admin key, it
 records the contract as its own administrator. The verdict was wrong in the worse direction —
 it called a good deployment bad, which is survivable — but the habit behind it is the same one
-this file already records twice today: writing down a property the evidence had not been
+this file already records under 2026-09-07: writing down a property the evidence had not been
 checked for. The fix names three cases and fails only on the one ADR 0003 cares about, an
 admin key held *outside* the contract.
 
@@ -129,10 +130,10 @@ contract holding less than 100,000 HBAR — and nothing local could see it, beca
 define their own copy of the constant and cross it against the contract's. That comparison can
 only ever show that this repository agrees with itself.
 
-It is the day's fourth instance of one shape: a claim written down, then built on, without the
-evidence for it ever being fetched. The first three were prose overstating what the code did.
-This one ran the other way - prose the code obeyed - and it is the more dangerous direction,
-because the code cannot disagree with a premise it was derived from.
+It is another instance of one shape: a claim written down, then built on, without the
+evidence for it ever being fetched. The earlier entries that day were prose overstating what the
+code did. This one ran the other way - prose the code obeyed - and it is the more dangerous
+direction, because the code cannot disagree with a premise it was derived from.
 
 What broke the loop was a check against something nobody here wrote: one real payment, on the
 real network, and the contract's own reverts as the evidence. Worth noting that the check
@@ -140,6 +141,50 @@ first passed *vacuously* - it compared the contract's balance view against the m
 before either had any money in it, `0 == 0` - and only failed two steps later, at the deposit.
 A check that cannot fail is not a check, and it was AI-written, in the same file that found
 the bug it was too weak to catch.
+
+**2026-09-08 — recommended a design resting on a rule that is not in the specification.** Asked
+whether an unmodified `exact` client should still be able to pay a quorum-gated resource, the
+model recommended against a fallback entry, reasoning that a client safely ignores a scheme it
+does not recognise. x402 v2 says no such thing: its only normative skip rule is written against
+`paymentFlow`, and there is no equivalent for `scheme`. The recommendation was made from a
+plausible mental model of how clients behave, and the specification was read afterwards, at which
+point the option the human had already chosen turned out to be the better-founded one. The
+correction is in [ADR 0005](specs/adr/0005-what-quorum-declares-on-the-wire.md), and it improved
+the design: declaring a `paymentFlow` value invokes a rule that actually exists.
+
+**2026-09-08 — wrote a MUST rule that would have broken every refund in the system.** The draft
+said the resource server must take the paying account from the facilitator's settlement response,
+"never from the payload" — sound-looking security advice, and wrong on this network. The Hedera
+binding defines `SettlementResponse.payer` as *"the Hedera account ID of the fee payer that
+sponsored the transaction"*: the facilitator, not the buyer. A server built to that rule would
+have recorded every deposit in every pool against the facilitator's account. Nothing would have
+appeared to fail — payments settle, deposits record, thresholds cross — and every refund would
+have been unreachable, with the money already gone. It was caught by reading the binding document
+while specifying the redemption path, not by reasoning about the rule.
+
+The single-payer script never had to confront this, because it already knew who the buyer was.
+The rule now derives the payer from the signed transfer itself.
+
+**2026-09-08 — a diagram written 2026-09-07 used the previous protocol version's header.** The
+flow in `specs/pool-contract.md` had the buyer retrying with `X-PAYMENT`, which is x402 v1; v2
+uses `PAYMENT-SIGNATURE`. The same diagram gave a settled-but-undelivered payment a 200. Both
+were written from recall rather than from the transport document, and both were found by opening
+it.
+
+**2026-09-08 — invented a fact about the ecosystem while fixing a different problem.** A cleanup
+review correctly found that §10.3 of the scheme spec justified the `escrow` binding's absence less
+well than §10.2 justified `auth-capture`'s — it described what `escrow` was without ever saying
+why it was unbuilt, leaving "they ran out of time" as the only available inference. Filling that
+gap, the model wrote that `escrow` has "no facilitator serving it". It has one: Boson Protocol's
+x402B serves the scheme on Base. Nothing was checked; a reason that sounded right was supplied for
+a gap that was real.
+
+Two things make it worth keeping. The correction is *stronger* than the invention — the honest
+reason is that the format is unmerged and its facilitator settles on Base rather than Hedera,
+which is the same feasibility wall `auth-capture` hits from the other side. And it needed a
+disclosure the invention did not: that facilitator is the proposal author's own, so a reader told
+only that "a facilitator serves `escrow`" would take it for independent uptake. Caught by the
+human, who wrote the facilitator.
 
 **2026-09-08 — had the fact in hand, deployed anyway, and let the failure re-teach it.**
 Before the first Fly deploy, graph-node's listening sockets were inspected in the local
@@ -156,6 +201,21 @@ about forty entries into the list and the connection dies; the error is `server 
 connection unexpectedly`, which reads like a network fault and is an out-of-memory kill. Not
 choosing a size is still choosing one, and the size that came back was too small for the only
 thing the database was for.
+
+The 2026-09-08 entries fall into two shapes, and both are worth naming.
+
+Four of them repeat the shape the earlier ones had: **this tool states things about external
+specifications fluently and from memory, and the fluency is uncorrelated with whether the
+document says it.** The missing skip rule, the settlement payer, the v1 header and the `escrow`
+facilitator were each asserted before the source was opened, and each was caught by opening it —
+none by thinking harder about it.
+
+The two deployment entries run the other way, and cost more. Neither was a claim about a
+document: one was a fact already gathered and then not carried into the plan, the other a
+decision never recognised as one. There was no source to fetch, because neither was a question
+anyone had thought to ask — so both surfaced as a live deployment failing, and both times the
+error named a symptom rather than the cause. Reading cures the first shape. The second is only
+cured by treating a deployment as somewhere choices get made rather than defaults accepted.
 
 ## 6. Review, and what it caught
 
