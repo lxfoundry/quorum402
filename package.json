@@ -19,6 +19,8 @@
     "accounts:create": "tsx scripts/create-accounts.ts",
     "check:env": "tsx scripts/check-env.ts",
     "check:payto": "tsx scripts/check-contract-payto.ts",
+    "deploy": "tsx scripts/deploy.ts",
+    "check:deployment": "tsx scripts/check-deployment.ts",
     "server": "tsx src/server/index.ts",
     "pay": "tsx scripts/pay-once.ts"
   },

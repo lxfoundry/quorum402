@@ -1,0 +1,191 @@
+/**
+ * Put QuorumPools on Hedera.
+ *
+ * Deployment goes through the SDK rather than a JSON-RPC relay, which is why
+ * `hardhat.config.ts` has no network entry: the contract's Hedera *entity id* is what x402
+ * needs in `PaymentRequirements.payTo`, and the SDK is what hands that back. A relay would
+ * return an EVM address and leave the entity id to be looked up afterwards.
+ *
+ * The contract is created with NO ADMIN KEY. That is the deployment expressing what ADR 0003
+ * decided: nobody owns this contract, so nobody may update or delete it - and it is
+ * irreversible, because a contract created without an admin key can never be given one.
+ * Hedera records that as the contract being its own administrator rather than as an absent
+ * key, which is the same thing said differently: the only key that could authorise an update
+ * belongs to a contract with no code to sign with it.
+ *
+ * Run: npm run build && npm run deploy
+ */
+import { Client, ContractCreateFlow, Hbar, AccountId, PrivateKey } from "@hiero-ledger/sdk";
+import { caip2, loadConfig } from "../src/config.js";
+import {
+  CONTRACT_NAME,
+  adminKeyKind,
+  codeHashOf,
+  deploymentPath,
+  fetchDeployedContract,
+  readArtifact,
+  readDeployment,
+  writeDeployment,
+} from "../src/pool/deployment.js";
+import type { Deployment } from "../src/pool/deployment.js";
+
+const ok = (m: string) => console.log(`  ok    ${m}`);
+const bad = (m: string) => console.log(`  FAIL  ${m}`);
+const info = (m: string) => console.log(`        ${m}`);
+
+/**
+ * Sized with headroom rather than trimmed. An INSUFFICIENT_GAS failure costs the fee and a
+ * second run, while unused gas is refunded only up to 20% of the limit - so being wrong low
+ * is worse than being wrong high, but not by much. The run prints what it actually used.
+ */
+const DEFAULT_GAS = 3_000_000;
+
+interface Args {
+  force: boolean;
+  gas: number;
+}
+
+function parseArgs(argv: string[]): Args {
+  const args: Args = { force: false, gas: DEFAULT_GAS };
+  for (let i = 0; i < argv.length; i++) {
+    switch (argv[i]) {
+      case "--force":
+        args.force = true;
+        break;
+      case "--gas": {
+        const value = Number(argv[++i]);
+        if (!Number.isInteger(value) || value <= 0) throw new Error(`--gas must be a positive integer`);
+        args.gas = value;
+        break;
+      }
+      default:
+        throw new Error(`unknown argument "${argv[i]}"`);
+    }
+  }
+  return args;
+}
+
+async function main(): Promise<number> {
+  const args = parseArgs(process.argv.slice(2));
+  const cfg = loadConfig();
+  const network = caip2(cfg.network);
+  let failures = 0;
+
+  console.log(`\ndeploying ${CONTRACT_NAME} to ${network}\n`);
+
+  console.log("artifact");
+  const artifact = readArtifact();
+  // Hex TEXT, not bytes. `ContractCreateFlow` uploads whatever it is given into a Hedera file
+  // and the node reads that file as the hex encoding of the bytecode - so handing it a
+  // `Uint8Array` of the decoded bytes stores raw bytes and fails on the network with
+  // ERROR_DECODING_BYTESTRING, after the file has been created and paid for.
+  const creationCode = artifact.bytecode.replace(/^0x/, "");
+  const expectedCodeHash = codeHashOf(artifact.deployedBytecode);
+  ok(`compiled, ${creationCode.length / 2} bytes of creation bytecode`);
+  info(`runtime code sha256 ${expectedCodeHash}`);
+
+  // A second deployment does not replace the first: the old contract keeps running, keeps
+  // whatever HBAR buyers have already paid into it, and stays the address the README names.
+  // Overwriting the record is how that contract gets forgotten with money still in it.
+  const existing = readDeployment(network);
+  if (existing && !args.force) {
+    throw new Error(
+      `${CONTRACT_NAME} is already deployed to ${network} as ${existing.contractId}.\n` +
+        `Deploying again leaves that contract live, holding whatever has been paid into it.\n` +
+        `Pass --force if that is genuinely what you want.`,
+    );
+  }
+  if (existing) info(`--force: replacing the record of ${existing.contractId}, which stays live`);
+
+  const client = cfg.network === "testnet" ? Client.forTestnet() : Client.forMainnet();
+  client.setOperator(AccountId.fromString(cfg.operatorId), PrivateKey.fromStringECDSA(cfg.operatorKey));
+  // The SDK's default cap is well under what a contract creation of this size costs, and the
+  // failure it produces names the cap rather than the contract.
+  //
+  // 20 HBAR, not more: `setDefaultMaxTransactionFee` range-checks with `Long.toInt()`, which
+  // takes the low 32 bits, so any cap at or above 2^31 tinybars (~21.47 HBAR) reads as
+  // negative and is rejected as "must be non-negative". A ceiling that low is not a problem
+  // here - the deployment costs a small fraction of it - but the error does not hint at the
+  // real bound, so it is written down rather than rediscovered.
+  client.setDefaultMaxTransactionFee(new Hbar(20));
+
+  try {
+    console.log("\ncreate");
+    info(`operator ${cfg.operatorId}, gas limit ${args.gas.toLocaleString()}`);
+    const response = await new ContractCreateFlow()
+      .setBytecode(creationCode)
+      .setGas(args.gas)
+      .setContractMemo("quorum402 pool contract")
+      // No .setAdminKey(). Deliberate, and permanent - see the header.
+      .execute(client);
+
+    const receipt = await response.getReceipt(client);
+    const contractId = receipt.contractId;
+    if (!contractId) throw new Error("contract creation returned no contract id");
+    const transactionId = response.transactionId.toString();
+    ok(`created ${contractId.toString()}  txId=${transactionId}`);
+
+    const record = await response.getRecord(client);
+    const gasUsed = record.contractFunctionResult?.gasUsed;
+    info(`fee ${record.transactionFee.toString()}${gasUsed ? `, gas used ${gasUsed.toString()}` : ""}`);
+
+    console.log("\nverify");
+    const onChain = await fetchDeployedContract(cfg.mirrorUrl, contractId.toString());
+    const actualCodeHash = codeHashOf(onChain.runtime_bytecode ?? "");
+    if (actualCodeHash === expectedCodeHash) {
+      ok("the deployed runtime bytecode is what this tree compiles to");
+    } else {
+      bad(`deployed code does not match this tree`);
+      info(`expected ${expectedCodeHash}`);
+      info(`on chain ${actualCodeHash}`);
+      failures++;
+    }
+    const admin = adminKeyKind(onChain, contractId.toString());
+    if (admin === "external") {
+      bad("an external key can update or delete this contract, which ADR 0003 says must not exist");
+      failures++;
+    } else {
+      ok(`admin key: ${admin} - nobody outside the contract can update or delete it`);
+    }
+
+    const evmAddress = onChain.evm_address ?? `0x${contractId.toEvmAddress()}`;
+    const deployment: Deployment = {
+      contract: CONTRACT_NAME,
+      network,
+      contractId: contractId.toString(),
+      evmAddress,
+      transactionId,
+      deployedAt: new Date().toISOString(),
+      codeHash: actualCodeHash,
+    };
+    console.log("\nrecord");
+    // Only a deployment that verified gets recorded. The contract exists either way - it is on
+    // the network, and the ids below are how to reach it - but a file asserting "this is the
+    // deployment" after verification failed is worse than no file: it overwrites a record that
+    // was good, and it is the kind of thing that gets committed by accident. Understand the
+    // cause, then re-run - with --force if a record is already there.
+    if (failures === 0) {
+      ok(`wrote ${writeDeployment(deployment)}`);
+    } else {
+      bad(`not recorded: verification failed, so ${deploymentPath(network)} is left untouched`);
+    }
+    info(`contractId  ${deployment.contractId}   <- PaymentRequirements.payTo`);
+    info(`evmAddress  ${deployment.evmAddress}`);
+    info(`https://hashscan.io/${cfg.network}/contract/${deployment.contractId}`);
+  } finally {
+    client.close();
+  }
+
+  return failures;
+}
+
+main().then(
+  (failures) => {
+    console.log(failures === 0 ? "\ndeployed\n" : `\ndeployed, with ${failures} problem(s)\n`);
+    process.exit(failures === 0 ? 0 : 1);
+  },
+  (err) => {
+    console.error(`\nFAILED: ${(err as Error).message}\n`);
+    process.exit(1);
+  },
+);

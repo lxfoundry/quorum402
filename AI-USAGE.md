@@ -41,6 +41,7 @@ was rejected.
 | 2026-09-07 | ADRs 0001–0004 and `specs/pool-contract.md` | Drafted and edited the documents | Every decision they record — what `quorum` binds to, how a payment is attributed, who holds authority, why nothing is rejected |
 | 2026-09-07 | `contracts/QuorumPools.sol` and its tests | Wrote the contract against the spec, and the test suite alongside it | Set the spec it was written against; directed the commit slicing so the history shows the work rather than the result |
 | 2026-09-07 | Solidity toolchain | Verified Hedera's compiler target from Hedera's own docs rather than assuming it, and pinned `evmVersion: cancun` to match | Decided against the deployment half of the usual toolbox, since deployment goes through the Hedera SDK already in the tree |
+| 2026-09-07 | Deployment to Hedera testnet (`scripts/deploy.ts`, `scripts/check-deployment.ts`, `src/pool/deployment.ts`) | Wrote the deploy script, the mirror-node verification and the committed deployment record | Decided the contract ships with no admin key, and that a deployment is verified from the ledger rather than from the receipt — a receipt only proves that *something* was created |
 | 2026-09-07 | Lint and CI (`.github/workflows/ci.yml`) | Wrote the ESLint and solhint configs and the workflow, and ran both linters over the tree to find what they flagged | Decided that warnings fail the run, and that the three the test fixtures raise are turned off at the line with a reason rather than repo-wide; kept the Solidity line-length limit off the contract |
 
 ## 4. What was done without AI
@@ -98,6 +99,23 @@ wrong constant *in the contract* fails the suite. What the tests genuinely canno
 whether Hedera's real ratio is 1e10. Both directions of this matter: a spec that overstates
 its guarantees misleads a reader, and one that understates its tests wastes the time of
 whoever reads it next deciding what to re-verify.
+
+**2026-09-07 — picked the more careful-looking of two options and paid for it on the network.**
+`ContractCreateFlow.setBytecode` accepts a string or a `Uint8Array`, and decoding the hex to
+bytes first reads as the more rigorous choice. It is the wrong one: the flow uploads whatever
+it is given into a Hedera file, and the node reads that file as *hex text*. The failure is
+ERROR_DECODING_BYTESTRING, arriving after the file has been created, appended to and paid for,
+with nothing local to catch it. A type signature that accepts both forms is not saying both
+work.
+
+**2026-09-07 — asserted a shape of the evidence that had never been looked at.** The deploy
+script's check for "nobody owns this contract" was written as `admin_key == null`, and it
+failed a deployment that was correct: Hedera does not record the absence of an admin key, it
+records the contract as its own administrator. The verdict was wrong in the worse direction —
+it called a good deployment bad, which is survivable — but the habit behind it is the same one
+this file already records twice today: writing down a property the evidence had not been
+checked for. The fix names three cases and fails only on the one ADR 0003 cares about, an
+admin key held *outside* the contract.
 
 ## 6. Review, and what it caught
 
