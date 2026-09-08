@@ -15,6 +15,7 @@ import {
   ContractFunctionParameters,
   Hbar,
   Long,
+  TransactionRecordQuery,
 } from "@hiero-ledger/sdk";
 import type {
   Client,
@@ -22,7 +23,7 @@ import type {
   ContractId,
   TransactionRecord,
 } from "@hiero-ledger/sdk";
-import { bytesToHex, decodeFunctionResult } from "viem";
+import { bytesToHex, decodeErrorResult, decodeFunctionResult } from "viem";
 import type { Abi } from "viem";
 import { readArtifact } from "./deployment.js";
 
@@ -266,6 +267,37 @@ export class PoolsClient {
       .setFunction(fn, args)
       .execute(this.client);
     return result.getUint8(0);
+  }
+
+  /**
+   * Which custom error a reverted call raised - `"Insolvent"`, `"DuplicateTransaction"`, and so on.
+   *
+   * A revert arrives as `CONTRACT_REVERT_EXECUTED`, which says only that the contract said no.
+   * The reason is in the transaction record, and `getRecord` will not hand that over because it
+   * validates the receipt status first - hence a second, non-validating query.
+   *
+   * Worth the extra round trip only because two of this contract's reverts mean opposite things
+   * to a coordinator that has already settled a payment: `Insolvent` means try again, and
+   * `DuplicateTransaction` means it already worked. Guessing between them either loses a
+   * deposit or invents one.
+   *
+   * Returns `undefined` when the reason cannot be read. This runs on a path that is already
+   * handling a failure, so it must not add one of its own.
+   */
+  async revertReasonOf(transactionId: string): Promise<string | undefined> {
+    try {
+      const record = await new TransactionRecordQuery()
+        .setTransactionId(transactionId)
+        .setValidateReceiptStatus(false)
+        .setMaxQueryPayment(MAX_QUERY_PAYMENT)
+        .execute(this.client);
+      const errorMessage = record.contractFunctionResult?.errorMessage;
+      if (!errorMessage) return undefined;
+      const data = (errorMessage.startsWith("0x") ? errorMessage : `0x${errorMessage}`) as `0x${string}`;
+      return decodeErrorResult({ abi: abi(), data }).errorName;
+    } catch {
+      return undefined;
+    }
   }
 
   /** Raw return data, for anything the SDK's positional getters cannot decode - see `abi()`. */
