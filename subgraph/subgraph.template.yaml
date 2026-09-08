@@ -1,0 +1,62 @@
+# The address and start block are filled in from deployments/hedera-testnet.json rather than
+# typed in: the deployment record is already this repo's single statement of where the
+# contract is, and a second copy of an address is a second thing that can be wrong.
+specVersion: 0.0.5
+description: >-
+  Pool state for quorum402 - who has paid into which HTTP 402 pool, whether it reached its
+  threshold before the deadline, and where the money went.
+repository: https://github.com/lxfoundry/quorum402
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum/contract
+    name: QuorumPools
+    # Hedera's tooling calls this network `testnet`, and it must match the name in the
+    # graph-node `ethereum:` setting. Not `hedera-testnet`.
+    network: testnet
+    source:
+      address: "${CONTRACT_ADDRESS}"
+      abi: QuorumPools
+      # Not an optimisation. Hedera testnet is past block 40,000,000 and the relay serves
+      # `eth_getLogs` 1000 blocks at a time, so indexing from zero is not slow, it is
+      # arithmetically out of reach. From the deployment block it is minutes.
+      startBlock: ${START_BLOCK}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/mappings.ts
+      entities:
+        - Protocol
+        - Pool
+        - Deposit
+        - Participation
+        - Account
+        - PayoutFailure
+        - Withdrawal
+      abis:
+        - name: QuorumPools
+          file: ./abis/QuorumPools.json
+      # Events only. The Hedera JSON-RPC relay does not implement `trace_filter` or
+      # `trace_block`, so graph-node call handlers cannot work here at all. The contract was
+      # written to emit on every state transition, which is what makes that a non-issue
+      # rather than a hole - see specs/pool-contract.md.
+      eventHandlers:
+        - event: PoolCreated(indexed uint256,indexed address,indexed address,uint64,uint32,uint64,string)
+          handler: handlePoolCreated
+        - event: DepositRecorded(indexed uint256,indexed address,uint256,uint64,string,uint32)
+          handler: handleDepositRecorded
+        - event: LateDeposit(indexed uint256,indexed address,uint256,uint64,string,uint8)
+          handler: handleLateDeposit
+        - event: ThresholdMet(indexed uint256,uint32,uint64)
+          handler: handleThresholdMet
+        - event: PoolExpired(indexed uint256,uint64)
+          handler: handlePoolExpired
+        - event: Released(indexed uint256,indexed address,uint64)
+          handler: handleReleased
+        - event: Refunded(indexed uint256,indexed address,uint256,uint64)
+          handler: handleRefunded
+        - event: PayoutFailed(indexed uint256,indexed address,uint64)
+          handler: handlePayoutFailed
+        - event: Withdrawn(indexed address,uint64)
+          handler: handleWithdrawn

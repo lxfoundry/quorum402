@@ -1,0 +1,22 @@
+{
+  "name": "quorum402-subgraph",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pool state for quorum402, indexed off Hedera testnet",
+  "license": "MIT",
+  "scripts": {
+    "codegen": "graph codegen",
+    "build": "graph build",
+    "up": "docker compose up -d",
+    "down": "docker compose down",
+    "reset": "docker compose down -v",
+    "logs": "docker compose logs -f graph-node",
+    "create-local": "graph create --node http://localhost:8020/ quorum402",
+    "remove-local": "graph remove --node http://localhost:8020/ quorum402",
+    "deploy-local": "graph deploy --node http://localhost:8020/ --ipfs http://localhost:5001 --version-label v0.0.1 quorum402"
+  },
+  "dependencies": {
+    "@graphprotocol/graph-cli": "0.71.2",
+    "@graphprotocol/graph-ts": "0.35.1"
+  }
+}
