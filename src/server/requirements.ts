@@ -34,6 +34,11 @@ export interface OfferParams {
   payTo: string;
   /** Resolved from the facilitator's `/supported`. Never hardcoded. */
   feePayer: string;
+  /**
+   * What is being sold, in words. Supplied by whoever knows - the catalogue - rather than
+   * derived from a pool, which knows its price and its threshold and not what it is for.
+   */
+  description?: string;
 }
 
 /**
@@ -91,7 +96,7 @@ export function paymentRequired(params: OfferParams): PaymentRequired {
   return {
     x402Version: X402_VERSION,
     error: paymentRequiredError(params.terms),
-    resource: resourceDescriptor(params.terms),
+    resource: resourceDescriptor(params.terms, params.description),
     accepts: [quorumRequirements(params), bindingRequirements(params)],
   };
 }
@@ -112,12 +117,13 @@ function paymentRequiredError(terms: PoolTerms): string {
   );
 }
 
-function resourceDescriptor(terms: PoolTerms): ResourceDescriptor {
+function resourceDescriptor(terms: PoolTerms, description?: string): ResourceDescriptor {
+  const state =
+    `Pool ${terms.poolId}: ${terms.seats} of ${terms.threshold} seats taken. ` +
+    `All-or-nothing - refunded in full if the threshold is not reached by the deadline.`;
   return {
     url: terms.resourceUrl,
-    description:
-      `Pool ${terms.poolId}: ${terms.seats} of ${terms.threshold} seats taken. ` +
-      `All-or-nothing - refunded in full if the threshold is not reached by the deadline.`,
+    description: description ? `${description} ${state}` : state,
     mimeType: "application/json",
   };
 }
