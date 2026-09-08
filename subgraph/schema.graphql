@@ -1,0 +1,185 @@
+# What the contract deliberately does not keep.
+#
+# QuorumPools stores only what it must enforce: a seat flag per payer, a deposit row, a state.
+# It does not store a participant list, it does not store the transaction id a payment settled
+# under, and it forgets nothing but it exposes nothing either - `poolOf` returns a tuple, not a
+# history. All of that lives in the events, and this is the shape they are read back into.
+#
+# The test for whether this schema earns its place: every field below is either impossible to
+# read from the contract, or expensive enough on-chain that the contract was written not to.
+
+type Protocol @entity {
+  "There is one. The id is the string `quorum402`."
+  id: ID!
+  poolCount: Int!
+  openPools: Int!
+  metPools: Int!
+  releasedPools: Int!
+  expiredPools: Int!
+  "Payments that took a seat."
+  depositCount: Int!
+  "Payments that settled but took no seat. Money that arrived and has to go back."
+  lateCount: Int!
+  "Distinct addresses that have ever paid into any pool."
+  payerCount: Int!
+  tinybarsIn: BigInt!
+  tinybarsReleased: BigInt!
+  tinybarsRefunded: BigInt!
+  "Tinybars sitting in `credit` because a push transfer was rejected."
+  tinybarsStranded: BigInt!
+  "The last block that changed anything here - not the last block indexed."
+  lastEventBlock: BigInt!
+}
+
+enum PoolState {
+  Open
+  Met
+  Expired
+  Released
+}
+
+"Why a settled payment took no seat. The contract emits this; it is never inferred here."
+enum LateReason {
+  ThresholdMet
+  DeadlinePassed
+  SeatTaken
+  WrongAmount
+}
+
+type Pool @entity {
+  "The contract's own pool id, decimal."
+  id: ID!
+  poolId: BigInt!
+  coordinator: Bytes!
+  recipient: Bytes!
+  unitTinybars: BigInt!
+  threshold: Int!
+  "Unix seconds."
+  deadline: BigInt!
+  resourceUrl: String!
+
+  state: PoolState!
+  "Counted deposits - one per distinct payer. Compare against `threshold`."
+  seats: Int!
+  "Tinybars this pool is holding on behalf of its payers, late payments included."
+  committedTinybars: BigInt!
+  refundedTinybars: BigInt!
+  "Set once, when the pool releases."
+  releasedTinybars: BigInt
+
+  createdAt: BigInt!
+  createdBlock: BigInt!
+  createdTx: Bytes!
+  "When the threshold was met. Null while the pool is still short."
+  metAt: BigInt
+  "When the pool was expired or released - the moment it stopped taking payments."
+  settledAt: BigInt
+
+  deposits: [Deposit!]! @derivedFrom(field: "pool")
+  "One row per distinct payer. The participant list the contract does not keep."
+  participants: [Participation!]! @derivedFrom(field: "pool")
+}
+
+"""
+One settled x402 payment attributed to a pool - counted or late.
+
+Both `DepositRecorded` and `LateDeposit` land here, because the contract stores them in one
+array under one id space and `Refunded` refers to that id without saying which kind it was.
+Splitting them into two entities would mean guessing at refund time; `counted` says it
+outright.
+"""
+type Deposit @entity {
+  "`<poolId>-<depositId>`."
+  id: ID!
+  pool: Pool!
+  depositId: BigInt!
+  payer: Account!
+  payerAddress: Bytes!
+  tinybars: BigInt!
+  """
+  The Hedera transaction id the payment settled under, as the coordinator supplied it. Emitted
+  rather than stored - the contract hashes it for the double-spend guard and keeps only the
+  hash - so this index is the only place the id itself survives.
+  """
+  hederaTxId: String!
+  "Whether this payment took a seat."
+  counted: Boolean!
+  "Set only when `counted` is false."
+  lateReason: LateReason
+  "Seats held by the pool immediately after this deposit. Null for a late payment."
+  seatsAfter: Int
+
+  recordedAt: BigInt!
+  recordedBlock: BigInt!
+  recordedTx: Bytes!
+
+  refunded: Boolean!
+  refundedAt: BigInt
+}
+
+"""
+A payer's relationship with one pool.
+
+`seatTaken` is the thing the whole primitive turns on - a pool needs N *distinct* buyers, so a
+second payment from an address that already holds a seat is late, not progress.
+"""
+type Participation @entity {
+  "`<poolId>-<payer>`."
+  id: ID!
+  pool: Pool!
+  payer: Account!
+  seatTaken: Boolean!
+  depositCount: Int!
+  tinybarsPaid: BigInt!
+  tinybarsRefunded: BigInt!
+  firstPaidAt: BigInt!
+}
+
+"""
+An address the contract has moved money for.
+
+Called `Account` rather than `Payer` because a failed push transfer credits whoever it was
+pushed to - which for a released pool is the *recipient*, not a payer. Two roles, one address
+space, one row.
+"""
+type Account @entity {
+  "The EVM address, lowercase hex."
+  id: ID!
+  address: Bytes!
+  "Pools this address has paid into, whether or not it took a seat in them."
+  poolCount: Int!
+  depositCount: Int!
+  tinybarsPaid: BigInt!
+  tinybarsRefunded: BigInt!
+  "Tinybars owed to this address after a push transfer was rejected, still unclaimed."
+  creditTinybars: BigInt!
+  deposits: [Deposit!]! @derivedFrom(field: "payer")
+  participations: [Participation!]! @derivedFrom(field: "payer")
+}
+
+"""
+A state transition where the HBAR did not move with it.
+
+Always paired with the transition's own `Released` or `Refunded`, so pool state is read from
+those and this only says the money is now sitting in `credit`. Kept because a demo that shows
+the refund path has to be able to show this one going wrong.
+"""
+type PayoutFailure @entity(immutable: true) {
+  id: ID!
+  pool: Pool!
+  to: Bytes!
+  tinybars: BigInt!
+  at: BigInt!
+  block: BigInt!
+  tx: Bytes!
+}
+
+"A stranded balance claimed back out of `credit`."
+type Withdrawal @entity(immutable: true) {
+  id: ID!
+  to: Bytes!
+  tinybars: BigInt!
+  at: BigInt!
+  block: BigInt!
+  tx: Bytes!
+}
