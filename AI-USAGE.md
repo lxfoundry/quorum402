@@ -44,6 +44,7 @@ was rejected.
 | 2026-09-07 | Deployment to Hedera testnet (`scripts/deploy.ts`, `scripts/check-deployment.ts`, `src/pool/deployment.ts`) | Wrote the deploy script, the mirror-node verification and the committed deployment record | Decided the contract ships with no admin key, and that a deployment is verified from the ledger rather than from the receipt — a receipt only proves that *something* was created |
 | 2026-09-07 | The first pooled payout on testnet (`scripts/check-payout.ts`, `src/pool/client.ts`) | Wrote the coordinator's client over the Hedera SDK and the end-to-end check | Insisted the unit question be settled against the network rather than against the repository's own constant — which is what found the defect below |
 | 2026-09-07 | Lint and CI (`.github/workflows/ci.yml`) | Wrote the ESLint and solhint configs and the workflow, and ran both linters over the tree to find what they flagged | Decided that warnings fail the run, and that the three the test fixtures raise are turned off at the line with a reason rather than repo-wide; kept the Solidity line-length limit off the contract |
+| 2026-09-08 | `specs/quorum-scheme.md` and ADR 0005 | Read the x402 v2 specification, its HTTP transport and the `exact` scheme documents, then drafted the scheme spec and the decision record against them | Set the design in a question-by-question session before a line was written: that a legacy `exact` client must still be able to pay, that entitlement is derived from chain state rather than held in a session, that pools are opened by the seller and never by the server, and that the scheme nests its hold binding rather than referencing it |
 
 ## 4. What was done without AI
 
@@ -138,6 +139,40 @@ first passed *vacuously* - it compared the contract's balance view against the m
 before either had any money in it, `0 == 0` - and only failed two steps later, at the deposit.
 A check that cannot fail is not a check, and it was AI-written, in the same file that found
 the bug it was too weak to catch.
+
+**2026-09-08 — recommended a design resting on a rule that is not in the specification.** Asked
+whether an unmodified `exact` client should still be able to pay a quorum-gated resource, the
+model recommended against a fallback entry, reasoning that a client safely ignores a scheme it
+does not recognise. x402 v2 says no such thing: its only normative skip rule is written against
+`paymentFlow`, and there is no equivalent for `scheme`. The recommendation was made from a
+plausible mental model of how clients behave, and the specification was read afterwards, at which
+point the option the human had already chosen turned out to be the better-founded one. The
+correction is in [ADR 0005](specs/adr/0005-what-quorum-declares-on-the-wire.md), and it improved
+the design: declaring a `paymentFlow` value invokes a rule that actually exists.
+
+**2026-09-08 — wrote a MUST rule that would have broken every refund in the system.** The draft
+said the resource server must take the paying account from the facilitator's settlement response,
+"never from the payload" — sound-looking security advice, and wrong on this network. The Hedera
+binding defines `SettlementResponse.payer` as *"the Hedera account ID of the fee payer that
+sponsored the transaction"*: the facilitator, not the buyer. A server built to that rule would
+have recorded every deposit in every pool against the facilitator's account. Nothing would have
+appeared to fail — payments settle, deposits record, thresholds cross — and every refund would
+have been unreachable, with the money already gone. It was caught by reading the binding document
+while specifying the redemption path, not by reasoning about the rule.
+
+The single-payer script never had to confront this, because it already knew who the buyer was.
+The rule now derives the payer from the signed transfer itself.
+
+**2026-09-08 — a diagram written yesterday used the previous protocol version's header.** The
+flow in `specs/pool-contract.md` had the buyer retrying with `X-PAYMENT`, which is x402 v1; v2
+uses `PAYMENT-SIGNATURE`. The same diagram gave a settled-but-undelivered payment a 200. Both
+were written from recall rather than from the transport document, and both were found by opening
+it.
+
+All three are the same shape as the four entries above them, and the shape is now worth naming
+outright: **this tool states things about external specifications fluently and from memory, and
+the fluency is uncorrelated with whether the document says it.** Every one was caught by fetching
+the source; none was caught by thinking harder about it.
 
 ## 6. Review, and what it caught
 
