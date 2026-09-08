@@ -30,6 +30,15 @@ coverage/
 coverage.json
 *.tsbuildinfo
 
+# --- local-machine workarounds, never the repo's business ---
+# A CA bundle carrying a TLS-inspecting proxy's root, and the compose override that mounts it.
+subgraph/.certs/
+subgraph/docker-compose.override.yml
+!subgraph/docker-compose.override.example.yml
+# graph-cli build output
+subgraph/generated/
+subgraph/build/
+
 # --- tooling ---
 .DS_Store
 Thumbs.db
