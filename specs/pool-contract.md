@@ -297,7 +297,7 @@ sequenceDiagram
         B->>RS: GET /resource/{poolId}
         RS-->>B: 402 + requirements{amount:unit,<br/>payTo: contract 0.0.x, extra.feePayer}
         B->>B: build TransferTransaction, sign — cannot submit
-        B->>RS: retry with X-PAYMENT
+        B->>RS: retry with PAYMENT-SIGNATURE
         RS->>F: /verify, then /settle
         F->>H: add fee-payer signature, submit
         H-->>P: HBAR credited — no contract code runs
@@ -305,7 +305,7 @@ sequenceDiagram
         RS->>P: recordDeposit(poolId, payerEvm, unit, hederaTxId)
         Note over P: solvency, tx-id uniqueness,<br/>seat and deadline resolved here
         P-->>G: DepositRecorded — or LateDeposit
-        RS-->>B: 200 + receipt — resource withheld until quorum
+        RS-->>B: 202 + receipt — resource withheld until quorum
     end
 
     alt threshold reached before the deadline
