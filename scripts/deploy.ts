@@ -21,6 +21,7 @@ import {
   CONTRACT_NAME,
   adminKeyKind,
   codeHashOf,
+  deploymentPath,
   fetchDeployedContract,
   readArtifact,
   readDeployment,
@@ -158,7 +159,16 @@ async function main(): Promise<number> {
       codeHash: actualCodeHash,
     };
     console.log("\nrecord");
-    ok(`wrote ${writeDeployment(deployment)}`);
+    // Only a deployment that verified gets recorded. The contract exists either way - it is on
+    // the network, and the ids below are how to reach it - but a file asserting "this is the
+    // deployment" after verification failed is worse than no file: it overwrites a record that
+    // was good, and it is the kind of thing that gets committed by accident. Understand the
+    // cause, then re-run - with --force if a record is already there.
+    if (failures === 0) {
+      ok(`wrote ${writeDeployment(deployment)}`);
+    } else {
+      bad(`not recorded: verification failed, so ${deploymentPath(network)} is left untouched`);
+    }
     info(`contractId  ${deployment.contractId}   <- PaymentRequirements.payTo`);
     info(`evmAddress  ${deployment.evmAddress}`);
     info(`https://hashscan.io/${cfg.network}/contract/${deployment.contractId}`);
