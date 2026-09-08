@@ -10,8 +10,8 @@ deadline. If the threshold is not reached, everyone is refunded.
 Built from scratch for [ETHOnline 2026](https://ethglobal.com/events/ethonline2026)
 (Classic / "From Scratch" track).
 
-> 🚧 **Status: day 1 of the build window.** Everything below marked `TODO` is a
-> placeholder to be filled as the work lands — nothing here is claimed as working yet.
+> 🚧 **Status: in active development.** Everything below marked `TODO` is a placeholder to be
+> filled as the work lands — nothing marked that way is claimed as working.
 
 ---
 
@@ -60,12 +60,18 @@ Design decisions are recorded as they are made:
 - [ADR 0004 — Deposits that cannot be refused](specs/adr/0004-deposits-that-cannot-be-refused.md)
   — why the money moves before the contract hears about it, and why rejecting a payment would
   destroy it
+- [ADR 0005 — What `quorum` declares on the wire](specs/adr/0005-what-quorum-declares-on-the-wire.md)
+  — why the coordination is a scheme rather than a field, why it proposes a payment flow as well,
+  and why a plain `exact` entry sits alongside it
 
 The contract those decisions describe is specified in
 [specs/pool-contract.md](specs/pool-contract.md), written before the code, and implemented in
 [contracts/QuorumPools.sol](contracts/QuorumPools.sol).
 
-TODO — the `quorum` scheme spec itself, as the implementation lands.
+The scheme itself is specified in [specs/quorum-scheme.md](specs/quorum-scheme.md): what x402
+cannot express today, the `conditional` payment flow it proposes, the wire format, the HTTP
+lifecycle, how entitlement is proven from chain state, and the three hold bindings — of which
+one is built.
 
 ---
 
