@@ -39,8 +39,15 @@ primary_region = "ams"
   local_path = "admin-rpc.sh"
 
 # Queries, and only queries. Port 8020 is the admin JSON-RPC - it can deploy and delete
-# subgraphs and it has no authentication whatsoever - so it is never published. Reach it with
-# `fly proxy 8020:8020 -a quorum402-subgraph`, which goes over the org's private network.
+# subgraphs and it has no authentication whatsoever - so it is never published.
+#
+# Nor is it reachable by proxy. `fly proxy 8020:8020` connects to the machine over the
+# private network, which is IPv6, and graph-node binds IPv4 only; the connection is accepted
+# locally and reset. The admin RPC is reached from inside the machine instead:
+#
+#   fly ssh console -a quorum402-subgraph -C "bash /admin-rpc.sh create quorum402"
+#
+# or, for the whole deploy, ./fly/deploy-subgraph.sh.
 [http_service]
   internal_port = 8000
   force_https = true
