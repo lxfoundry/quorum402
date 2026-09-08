@@ -12,11 +12,15 @@
 services:
   graph-node:
     image: graphprotocol/graph-node:v0.35.1
+    # Only the query port is offered to the network. Port 8020 creates and deletes subgraphs
+    # with no authentication of any kind, which is why `fly/graph-node.toml` refuses to publish
+    # it - and the same reasoning has to hold here, or the safer of the two deployments is the
+    # one nobody runs. Loopback keeps every script below working: they all say `localhost`.
     ports:
       - "8000:8000" # GraphQL queries      <- what a judge, or the UI, reads
-      - "8020:8020" # deploy / admin JSON-RPC
-      - "8030:8030" # indexing status
-      - "8040:8040" # prometheus metrics
+      - "127.0.0.1:8020:8020" # deploy / admin JSON-RPC - unauthenticated, so never off-host
+      - "127.0.0.1:8030:8030" # indexing status
+      - "127.0.0.1:8040:8040" # prometheus metrics
     depends_on:
       ipfs:
         condition: service_started
@@ -66,16 +70,21 @@ services:
 
   ipfs:
     image: ipfs/kubo:v0.17.0
+    # 5001 is kubo's RPC API - full control of the node, also unauthenticated. `graph deploy`
+    # reaches it on localhost and nothing else needs to.
     ports:
-      - "5001:5001"
+      - "127.0.0.1:5001:5001"
     restart: unless-stopped
     volumes:
       - ipfs:/data/ipfs
 
   postgres:
     image: postgres:16
+    # The password below is committed to a public repository. That is survivable for a
+    # throwaway local database and only for as long as the port it opens is unreachable from
+    # anywhere but this machine.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     restart: unless-stopped
     command: ["postgres", "-cshared_preload_libraries=pg_stat_statements", "-cmax_connections=200"]
     environment:
