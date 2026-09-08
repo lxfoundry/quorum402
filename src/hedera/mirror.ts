@@ -32,3 +32,25 @@ export async function balanceTinybars(mirrorUrl: string, id: string): Promise<bi
   const body = (await res.json()) as { balance?: { balance?: number } };
   return BigInt(body.balance?.balance ?? 0);
 }
+
+/**
+ * Poll until the mirror node reports the balance expected, or give up and return what it says.
+ *
+ * Mirror ingestion lags consensus by a second or two. Nothing in the *recording* path waits on
+ * it (ADR 0006), but anything that reads a balance back to show that money moved has to, or it
+ * reports the pre-transfer figure and reads as though nothing happened.
+ */
+export async function awaitBalance(
+  mirrorUrl: string,
+  id: string,
+  expected: bigint,
+  attempts = 12,
+): Promise<bigint> {
+  let last = 0n;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    last = await balanceTinybars(mirrorUrl, id);
+    if (last === expected) return last;
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  return last;
+}

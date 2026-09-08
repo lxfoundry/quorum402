@@ -24,7 +24,7 @@ import { AccountId, Client, ContractId, PrivateKey } from "@hiero-ledger/sdk";
 import { caip2, loadConfig } from "../src/config.js";
 import { PoolsClient } from "../src/pool/client.js";
 import { readDeployment } from "../src/pool/deployment.js";
-import { balanceTinybars, evmAddressOf } from "../src/hedera/mirror.js";
+import { awaitBalance, balanceTinybars, evmAddressOf } from "../src/hedera/mirror.js";
 import { Facilitator } from "../src/x402/facilitator.js";
 import {
   HBAR_ASSET,
@@ -73,17 +73,6 @@ function parseArgs(argv: string[]): Args {
     }
   }
   return args;
-}
-
-/** Mirror ingestion lags consensus. Poll for the balance expected rather than sleeping once. */
-async function awaitBalance(mirrorUrl: string, id: string, expected: bigint): Promise<bigint> {
-  let last = 0n;
-  for (let attempt = 1; attempt <= 12; attempt++) {
-    last = await balanceTinybars(mirrorUrl, id);
-    if (last === expected) return last;
-    await new Promise((r) => setTimeout(r, 1500));
-  }
-  return last;
 }
 
 async function main(): Promise<number> {
