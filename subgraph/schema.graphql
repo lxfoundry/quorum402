@@ -7,6 +7,20 @@
 #
 # The test for whether this schema earns its place: every field below is either impossible to
 # read from the contract, or expensive enough on-chain that the contract was written not to.
+#
+# One thing to carry into the rest of this file: an index is built from events, and events are
+# emitted when the contract *decides* something - which is not always when its own views
+# change. It shows up twice, and both are noted again on the fields they affect:
+#
+#   - a pool whose deadline has passed still reads `Open` here until somebody stamps it,
+#     because `PoolExpired` is emitted by `expire`, `claimRefund` and `refundAll` and by
+#     nothing else. `statusOf` resolves that window live on-chain; an index cannot
+#   - `Released` and `Refunded` are emitted *before* the transfer they describe is attempted,
+#     so money whose push was rejected is recorded here as having moved, and `PayoutFailed`
+#     then records that it is also owed
+#
+# Neither is patched over. The log is what it is, and a subgraph that quietly disagreed with
+# the events it is built from would be the worse artifact.
 
 type Protocol @entity {
   "There is one. The id is the string `quorum402`."
@@ -25,7 +39,13 @@ type Protocol @entity {
   tinybarsIn: BigInt!
   tinybarsReleased: BigInt!
   tinybarsRefunded: BigInt!
-  "Tinybars sitting in `credit` because a push transfer was rejected."
+  """
+  Tinybars sitting in `credit` because a push transfer was rejected.
+
+  A **subset** of `tinybarsReleased + tinybarsRefunded`, not an addition to them: the transfer
+  was emitted before it was attempted, so anything stranded has already been counted as moved.
+  Summing all three double-counts it.
+  """
   tinybarsStranded: BigInt!
   "The last block that changed anything here - not the last block indexed."
   lastEventBlock: BigInt!
@@ -58,10 +78,27 @@ type Pool @entity {
   deadline: BigInt!
   resourceUrl: String!
 
+  """
+  The pool's **stored** state, as the contract last wrote it - which is not always its
+  effective one.
+
+  A pool whose deadline has passed stays `Open` here until `expire`, `claimRefund` or
+  `refundAll` stamps it, because `PoolExpired` is the only thing this index can read and none
+  of them has been called yet. On-chain, `statusOf` resolves the same window live. So read
+  `state` against `deadline`: `Open` with a `deadline` in the past means expired and unstamped,
+  not open for business.
+  """
   state: PoolState!
   "Counted deposits - one per distinct payer. Compare against `threshold`."
   seats: Int!
-  "Tinybars this pool is holding on behalf of its payers, late payments included."
+  """
+  Tinybars this pool is holding on behalf of its payers, late payments included.
+
+  Follows the events, so it falls when `Released` or `Refunded` is emitted - which happens
+  before the transfer is attempted. If that transfer is rejected the HBAR never leaves the
+  contract, and the contract's own `committedTinybars()` does not fall, because it is still
+  owed. The two then disagree by exactly the sum of this pool's `PayoutFailure` rows.
+  """
   committedTinybars: BigInt!
   refundedTinybars: BigInt!
   "Set once, when the pool releases."
@@ -157,7 +194,13 @@ type Account @entity {
   depositCount: Int!
   tinybarsPaid: BigInt!
   tinybarsRefunded: BigInt!
-  "Tinybars owed to this address after a push transfer was rejected, still unclaimed."
+  """
+  Tinybars owed to this address after a push transfer was rejected, still unclaimed.
+
+  Overlaps `tinybarsPaid` and `tinybarsRefunded` rather than standing beside them, for the
+  same reason `Protocol.tinybarsStranded` does: an address whose refund was rejected reads as
+  refunded *and* owed, because the refund was emitted and then failed to land.
+  """
   creditTinybars: BigInt!
   deposits: [Deposit!]! @derivedFrom(field: "payer")
   participations: [Participation!]! @derivedFrom(field: "payer")

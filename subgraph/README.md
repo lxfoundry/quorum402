@@ -48,6 +48,30 @@ So [`src/mappings.ts`](src/mappings.ts) reconstructs, from events alone:
 Event handlers only, and not by preference: the Hedera relay implements neither `trace_filter`
 nor `trace_block`, so graph-node call handlers cannot run against it.
 
+## Where this index and the contract disagree, on purpose
+
+Events are emitted when the contract *decides* something, and that is not always the moment its
+own views change. Two places where the difference is visible, both worth knowing before reading
+a number off this index and calling it the state of the world:
+
+**A pool past its deadline reads `Open` until somebody stamps it.** `PoolExpired` is emitted by
+`expire`, `claimRefund` and `refundAll`, and by nothing else — so between a deadline passing and
+the first person acting on it, this index says `Open` while the contract's `statusOf` says
+`Expired`. The contract documents that window itself, and every method that acts on state
+resolves it first. Read `state` against `deadline`: `Open` with a `deadline` in the past means
+expired and unstamped.
+
+**Money whose transfer was rejected is counted as moved and as owed.** `Released` and `Refunded`
+are emitted *before* the transfer is attempted — deliberately, so a pool is terminal before
+anything can reenter — and `PayoutFailed` follows only when the push is rejected. The contract's
+committed total falls only on success, so after a failed push its `committedTinybars()` still
+counts that money and this index's does not. `tinybarsStranded` is therefore a subset of
+released plus refunded, not an addition to them.
+
+Neither is smoothed over in the mappings. An index should record what the log says, and a
+subgraph that quietly disagreed with the events it is built from would be harder to trust than
+one that documents where it differs.
+
 ## Run it
 
 ```bash
