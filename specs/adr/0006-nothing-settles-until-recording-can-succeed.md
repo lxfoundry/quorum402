@@ -3,7 +3,7 @@
 - **Date:** 2026-09-08
 - **Status:** Accepted
 - **Depends on:** [ADR 0003](0003-pool-authority-model.md), [ADR 0004](0004-deposits-that-cannot-be-refused.md)
-- **Implements:** [quorum-scheme.md §7](../quorum-scheme.md#7-resource-server-verification-rules-must) rules 2, 6 and 7
+- **Implements:** [quorum-scheme.md §7](../quorum-scheme.md#7-resource-server-verification-rules-must) rules 2, 5, 6 and 7
 
 ## Context
 
