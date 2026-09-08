@@ -101,10 +101,13 @@ and is made as one — see [ADR 0005](adr/0005-what-quorum-declares-on-the-wire.
 | `extra.threshold` | Distinct counted payers required |
 | `extra.filled` | Seats counted **at the time this response was written**. Advisory |
 | `extra.deadline` | Unix seconds. After it, no payment can be counted |
-| `extra.binding` | The hold binding: how one payer's funds are held. §10 |
+| `extra.paymentFlow` | `"conditional"`. MUST be present — §5 |
+| `extra.binding` | The hold binding: `{ scheme, extra }`, naming how one payer's funds are held and carrying whatever that binding's own requirement needs. §10 |
 
-`amount`, `asset`, `payTo` and `network` MUST be identical to the binding's. They are stated at
-the `quorum` level because clients select entries on them.
+`amount`, `asset`, `payTo` and `network` describe the payment itself, so they are stated once at
+the `quorum` level rather than repeated inside `extra.binding`; a binding inherits them. They sit
+at the top level because clients select entries on them. Where a fallback entry is offered, it
+MUST carry the same four (§5).
 
 **`filled` is advisory and MUST be treated as stale.** It is true when written and may be wrong by
 the time the payer signs. A client MUST NOT read `filled < threshold` as a guaranteed seat; a
@@ -214,7 +217,8 @@ fails. `conditional` adds one row: **202 Accepted**.
 | " | `/verify` or `/settle` rejects | 402 + `PAYMENT-RESPONSE` |
 | " | Settled; threshold not yet met | **202** + `PAYMENT-RESPONSE` + receipt |
 | " | Settled; **this payment** met the threshold | 200 + resource + `PAYMENT-RESPONSE` |
-| `+ QUORUM-RECEIPT` | Pool met, proof valid | 200 + resource |
+| `+ QUORUM-RECEIPT` | Threshold reached, proof valid, deposit **counted** | 200 + resource |
+| " | Proof valid, but the deposit took no seat (`counted: false`) | 409 + where to reclaim |
 | " | Pool still open | 202 + current fill |
 | " | Pool expired | 409 + where to reclaim |
 | " | Proof invalid or expired | 401 |
@@ -261,7 +265,17 @@ seat would be a lie the payer discovers only when redemption fails.
    the pool this resource advertised MUST be rejected with 400, before any facilitator call.
 2. **Refuse closed pools before settling.** If the pool is no longer open, or its deadline has
    passed, the server MUST reject with 402 and MUST NOT call `/settle`.
-3. **Derive the payer from the payment, not from the client and not from the settlement
+3. **Unwrap before calling the facilitator.** A facilitator serves the *binding's* scheme, not
+   `quorum`, and will reject an envelope naming one it does not implement. The server MUST
+   construct a binding-level request — `{ x402Version, resource, accepted: `**the binding's own
+   requirement**`, payload: `**`payload.binding` verbatim**` }` — and pass that to `/verify` and
+   `/settle`, with the matching binding-level `PaymentRequirements`. The binding payload itself is
+   never rewritten, re-signed or re-encoded; only the envelope around it is built.
+4. **Require exactly one debited account.** The server MUST reject a binding payload whose
+   transfer debits more than one account, and MUST check that the credit leg pays `amount` to
+   `payTo`. A transfer can net to zero while debiting two parties, which would leave both the seat
+   and the refund destination ambiguous.
+5. **Derive the payer from the payment, not from the client and not from the settlement
    response.** The paying account is the debited party in the binding payload's own transfer,
    which the payer signed and the facilitator validates.
 
@@ -273,13 +287,15 @@ seat would be a lie the payer discovers only when redemption fails.
    That is the facilitator. A server that attributes deposits from it records **every deposit in
    every pool against the facilitator**, which succeeds silently and makes every refund
    unreachable.
-4. **Record what settled, even when recording fails.** Once `/settle` reports success, the funds
-   have moved. The server MUST respond 202 carrying `PAYMENT-RESPONSE` and a receipt with the
-   transaction id, marking `attributed: false` if the deposit could not be written, and MUST retry
-   writing it. It MUST NOT answer with a bare 500: that destroys the payer's only evidence of a
-   payment that really happened. A `settlement_pending` result is treated identically, since the
-   specification requires a non-empty transaction in that case.
-5. **Never count a payment twice.** Deduplication is on the settled transaction id, and MUST be
+6. **Record what settled, even when recording fails.** Once `/settle` reports success, the funds
+   have moved, and the server MUST NOT fail the request. It responds per §6, carrying
+   `PAYMENT-RESPONSE` and a receipt with the transaction id; where the deposit could not be
+   written it responds **202** with `attributed: false`, and MUST retry writing it. It MUST NOT
+   answer with a bare 500: that destroys the payer's only evidence of a payment that really
+   happened. A `settlement_pending` is treated identically: the specification makes it a
+   **non-terminal** `SettleResponse.errorReason` and requires it to carry a non-empty
+   `transaction`, so the payer still has a hash to reconcile against the chain.
+7. **Never count a payment twice.** Deduplication is on the settled transaction id, and MUST be
    enforced by the hold binding's own state rather than by server memory.
 
 ## 8. Entitlement and redemption
@@ -287,18 +303,25 @@ seat would be a lie the payer discovers only when redemption fails.
 Entitlement is **derived from the hold binding's state**, not from a session. A server holds
 nothing that its restart could lose, and a third party can check any claim independently.
 
-To redeem, a payer presents `QUORUM-RECEIPT`: `{ accountId, poolId, transaction, validUntil,
-signature }`, signing this canonical message with the key that controls the paying account:
+To redeem, a payer presents `QUORUM-RECEIPT`: the base64 encoding of the JSON object
+`{ accountId, poolId, transaction, validUntil, signature }`, where `signature` is
+base64-encoded raw signature bytes. The payer signs this canonical message with the key that
+controls the paying account:
 
 ```
-quorum402:redeem:v1
-network      hedera:testnet
-contract     0.0.10409980
-poolId       7
-transaction  0.0.1235@1700000000.000000000
-resource     https://example.test/resource/7
-validUntil   1789171500
+quorum402:redeem:v1\n
+network hedera:testnet\n
+contract 0.0.10409980\n
+poolId 7\n
+transaction 0.0.1235@1700000000.000000000\n
+resource https://example.test/resource/7\n
+validUntil 1789171500\n
 ```
+
+**The message is signed as exact bytes, so its layout is normative**: UTF-8, one `key value` pair
+per line, a **single space** between key and value, `\n` after every line including the last, keys
+in the order shown, and no padding or alignment. The `\n` above are shown literally for that
+reason; alignment would be ambiguous where a verifier must reproduce the bytes.
 
 The server MUST, in order:
 
@@ -307,7 +330,16 @@ The server MUST, in order:
 3. Verify the signature against that key, whatever its type.
 4. Find the deposit whose settled transaction id matches, in that pool, and require both that its
    recorded payer equals that EVM address and that it is `counted`.
-5. Serve the resource only if the pool has met its threshold.
+
+   The transaction id is **not** contract state under the `exact` binding — it is emitted with
+   `DepositRecorded` and `LateDeposit` rather than stored, so the id resolves to a deposit index
+   through the binding's logs (an indexer or the mirror node), and the payer and `counted` facts
+   are then read back from the contract at that index. Logs are consensus state, so this is still
+   derived from the binding rather than from the server; it is not a view call.
+5. Serve the resource only if the pool has **reached its threshold** — `seats >= threshold`,
+   equivalently a state of `Met` **or `Released`**. A pool that has already paid the seller out
+   still entitles every counted payer: testing for `Met` alone would withhold the resource the
+   moment the payout landed, which is the coupling §6 forbids.
 
 **The recorded payer address MUST be the address the network holds for the account**, at recording
 time and at redemption time alike. Deriving it from the account's key at one end and reading it
