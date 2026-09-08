@@ -16,7 +16,12 @@ import {
   Hbar,
   Long,
 } from "@hiero-ledger/sdk";
-import type { Client, ContractId } from "@hiero-ledger/sdk";
+import type {
+  Client,
+  ContractFunctionResult,
+  ContractId,
+  TransactionRecord,
+} from "@hiero-ledger/sdk";
 
 /** Mirrors `QuorumPools.State`. Index is the on-chain enum value. */
 export const POOL_STATES = ["Open", "Met", "Expired", "Released"] as const;
@@ -61,6 +66,12 @@ export interface CallResult {
   gasUsed: bigint;
 }
 
+/** A completed call, with the result the record is required to carry. */
+interface Call {
+  record: TransactionRecord;
+  result: ContractFunctionResult;
+}
+
 export class PoolsClient {
   constructor(
     private readonly client: Client,
@@ -76,10 +87,10 @@ export class PoolsClient {
       .addUint64(long(params.deadline))
       .addString(params.resourceUrl);
 
-    const record = await this.execute("createPool", GAS.createPool, args);
+    const call = await this.execute("createPool", GAS.createPool, args);
     return {
-      ...summarise(record),
-      poolId: BigInt(record.contractFunctionResult?.getUint256(0)?.toFixed() ?? "0"),
+      ...summarise(call),
+      poolId: BigInt(call.result.getUint256(0).toFixed()),
     };
   }
 
@@ -99,12 +110,11 @@ export class PoolsClient {
       .addUint64(long(params.tinybars))
       .addString(params.hederaTxId);
 
-    const record = await this.execute("recordDeposit", GAS.recordDeposit, args);
-    const result = record.contractFunctionResult;
+    const call = await this.execute("recordDeposit", GAS.recordDeposit, args);
     return {
-      ...summarise(record),
-      depositId: BigInt(result?.getUint256(0)?.toFixed() ?? "0"),
-      counted: result?.getBool(1) ?? false,
+      ...summarise(call),
+      depositId: BigInt(call.result.getUint256(0).toFixed()),
+      counted: call.result.getBool(1),
     };
   }
 
@@ -115,11 +125,15 @@ export class PoolsClient {
   }
 
   async statusOf(poolId: bigint): Promise<PoolState> {
-    const result = await this.query(
+    const value = await this.query(
       "statusOf",
       new ContractFunctionParameters().addUint256(long(poolId)),
     );
-    return POOL_STATES[result] ?? "Open";
+    const state = POOL_STATES[value];
+    // An enum value this client does not know is a contract it does not know. Reporting the
+    // first state instead would be a plausible answer, which is the worst kind of wrong here.
+    if (!state) throw new Error(`statusOf(${poolId}) returned unknown pool state ${value}`);
+    return state;
   }
 
   /** Tinybars this contract owes to payers and recipients. Never derived from its balance. */
@@ -136,7 +150,7 @@ export class PoolsClient {
     );
   }
 
-  private async execute(fn: string, gas: number, args: ContractFunctionParameters) {
+  private async execute(fn: string, gas: number, args: ContractFunctionParameters): Promise<Call> {
     const response = await new ContractExecuteTransaction()
       .setContractId(this.contractId)
       .setGas(gas)
@@ -145,7 +159,15 @@ export class PoolsClient {
       .execute(this.client);
     // The receipt would do for success, but the record carries the return value and the gas,
     // and a call whose return value nobody reads is a call nobody has checked.
-    return await response.getRecord(this.client);
+    const record = await response.getRecord(this.client);
+    const result = record.contractFunctionResult;
+    // A record with no result means the call did not run as a contract call. Substituting a
+    // default here would hand back a pool id of 0, or a deposit that took no seat, and the
+    // next call would act on it as though it were an answer.
+    if (!result) {
+      throw new Error(`${fn} left no contract result on ${record.transactionId.toString()}`);
+    }
+    return { record, result };
   }
 
   private async query(fn: string, args: ContractFunctionParameters): Promise<number> {
@@ -169,9 +191,9 @@ export class PoolsClient {
   }
 }
 
-function summarise(record: { transactionId: unknown; contractFunctionResult?: { gasUsed: Long } | null }): CallResult {
+function summarise({ record, result }: Call): CallResult {
   return {
-    transactionId: String(record.transactionId),
-    gasUsed: BigInt(record.contractFunctionResult?.gasUsed?.toString() ?? "0"),
+    transactionId: record.transactionId.toString(),
+    gasUsed: BigInt(result.gasUsed.toString()),
   };
 }
