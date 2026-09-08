@@ -136,7 +136,7 @@ function entityPart(part: string, entityId: string): number {
  * would be reported as an `external` admin key, the one answer that means something is wrong
  * with the contract, when what is actually wrong is the argument.
  */
-function parseEntityId(entityId: string): { shard: number; realm: number; num: number } {
+export function parseEntityId(entityId: string): { shard: number; realm: number; num: number } {
   const [shard, realm, num, ...rest] = entityId.split(".");
   if (shard === undefined || realm === undefined || num === undefined || rest.length > 0) {
     throw new Error(`not a Hedera entity id: "${entityId}" - expected shard.realm.num, e.g. 0.0.1234`);

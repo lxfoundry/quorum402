@@ -16,6 +16,7 @@ import {
   codeHashOf,
   deploymentPath,
   fetchDeployedContract,
+  parseEntityId,
   readArtifact,
   readDeployment,
 } from "../src/pool/deployment.js";
@@ -28,8 +29,14 @@ async function main(): Promise<number> {
   const argv = process.argv.slice(2);
   let contractId: string | undefined;
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--contract") contractId = argv[++i];
-    else throw new Error(`unknown argument "${argv[i]}"`);
+    if (argv[i] === "--contract") {
+      const value = argv[++i];
+      if (value === undefined) throw new Error(`--contract needs an entity id, e.g. --contract 0.0.1234`);
+      // Checked here rather than at the mirror node, which would spend twelve retries before
+      // failing on something the argument itself already showed.
+      parseEntityId(value);
+      contractId = value;
+    } else throw new Error(`unknown argument "${argv[i]}"`);
   }
 
   const cfg = loadConfig();
