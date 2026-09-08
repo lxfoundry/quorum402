@@ -171,15 +171,19 @@ the **same payment** under its hold binding's own scheme:
 }
 ```
 
-Its purpose is interoperability with clients that do not implement `quorum`. It works because
-under this design there is nothing exotic about the payment itself — same recipient, same amount,
-same asset, same facilitator.
+Its purpose is interoperability with clients that do not implement `quorum`. Why a fallback rather
+than an extension or a bare scheme is [ADR 0005](adr/0005-what-quorum-declares-on-the-wire.md).
 
-Three things follow, and the third is a weakness this document does not hide.
-
+- The fallback entry MUST declare the same `payTo`, `amount`, `asset` and `network` as the
+  `quorum` entry. It is the same payment, described under the hold binding's own scheme.
+- A server MUST declare `extra.paymentFlow` on **both** entries. The Hedera `exact` binding
+  declares neither an `assetTransferMethod` nor a default flow, so a client has nothing to resolve
+  against, and the specification requires the field once the resolved flow is not `authorization`.
 - A client that does not recognise `paymentFlow: "conditional"` MUST NOT construct a payment for
-  the `quorum` entry, and SHOULD skip it. This is the specification's own rule, and it is why the
-  flow is declared: an unrecognised **scheme** has no such rule attached to it.
+  the `quorum` entry, and SHOULD skip it.
+
+Two consequences follow, and the second is a weakness this document does not hide.
+
 - A payer arriving through the fallback is recorded and holds a seat exactly as a `quorum` payer
   does. It receives a receipt rather than the resource (§6), is refunded automatically if the pool
   fails (§9), and can redeem whenever the pool succeeds (§8), because entitlement is derived from
