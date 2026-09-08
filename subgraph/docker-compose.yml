@@ -1,0 +1,107 @@
+# A graph-node that can index Hedera.
+#
+# The Graph's own network does not serve Hedera - it is absent from
+# https://thegraph.com/docs/en/supported-networks/ - and Hedera's hosted service is not open:
+# "Although Hedera supports subgraphs, its hosted service is currently unavailable, so we'll
+# need to set up and run a local graph node to deploy our subgraph."
+# So indexing this contract means running the indexer. That is what this file is.
+#
+# The image is stock `graphprotocol/graph-node` - no fork, no patch. What makes it work on
+# Hedera is the environment below, and every value in it is deliberate.
+
+services:
+  graph-node:
+    image: graphprotocol/graph-node:v0.35.1
+    # Only the query port is offered to the network. Port 8020 creates and deletes subgraphs
+    # with no authentication of any kind, which is why `fly/graph-node.toml` refuses to publish
+    # it - and the same reasoning has to hold here, or the safer of the two deployments is the
+    # one nobody runs. Loopback keeps every script below working: they all say `localhost`.
+    ports:
+      - "8000:8000" # GraphQL queries      <- what a judge, or the UI, reads
+      - "127.0.0.1:8020:8020" # deploy / admin JSON-RPC - unauthenticated, so never off-host
+      - "127.0.0.1:8030:8030" # indexing status
+      - "127.0.0.1:8040:8040" # prometheus metrics
+    depends_on:
+      ipfs:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      postgres_host: postgres
+      postgres_user: graph-node
+      postgres_pass: let-me-in
+      postgres_db: graph-node
+      ipfs: "ipfs:5001"
+      GRAPH_LOG: info
+
+      # `testnet` is the network name, and it has to match `network:` in subgraph.yaml.
+      # Not `hedera-testnet` - Hedera's own tooling calls it `testnet`, and graph-node only
+      # compares the string.
+      #
+      # Hashio is Hedera's public JSON-RPC relay. It is rate-limited shared infrastructure,
+      # which is survivable here only because the ingestor settings below keep the request
+      # rate low and `startBlock` keeps the backfill short.
+      ethereum: "testnet:${HEDERA_RPC_URL:-https://testnet.hashio.io/api}"
+
+      # --- Hedera-specific. Defaults will not work; these are not guesses ---
+      #
+      # Taken from the values Hedera publishes for its own graph-node deployment:
+      # https://github.com/hashgraph/hedera-the-graph -> charts/hedera-the-graph-node/values.yaml
+      #
+      # ETHEREUM_REORG_THRESHOLD=0    Hedera has finality, not probabilistic settlement.
+      #                               There is no reorg to wait out, and a non-zero threshold
+      #                               only holds indexed blocks back for nothing.
+      # GRAPH_ETHEREUM_MAX_BLOCK_RANGE_SIZE=1000
+      #                               The relay caps `eth_getLogs` at 1000 blocks
+      #                               (ETH_GET_LOGS_BLOCK_RANGE_LIMIT). Asking for more comes
+      #                               back an error, not a truncated page.
+      # ETHEREUM_BLOCK_BATCH_SIZE=1   The relay is not an archive node behind a fat pipe.
+      # ETHEREUM_POLLING_INTERVAL=1000
+      #                               Hedera produces a block roughly every 2s.
+      ETHEREUM_BLOCK_BATCH_SIZE: "1"
+      ETHEREUM_POLLING_INTERVAL: "1000"
+      ETHEREUM_REORG_THRESHOLD: "0"
+      GRAPH_ETHEREUM_BLOCK_INGESTOR_MAX_CONCURRENT_JSON_RPC_CALLS_FOR_TXN_RECEIPTS: "100"
+      GRAPH_ETHEREUM_CLEANUP_BLOCKS: "true"
+      GRAPH_ETHEREUM_GENESIS_BLOCK_NUMBER: "0"
+      GRAPH_ETHEREUM_MAX_BLOCK_RANGE_SIZE: "1000"
+      GRAPH_ETHEREUM_MAX_EVENT_ONLY_RANGE: "50"
+
+  ipfs:
+    image: ipfs/kubo:v0.17.0
+    # 5001 is kubo's RPC API - full control of the node, also unauthenticated. `graph deploy`
+    # reaches it on localhost and nothing else needs to.
+    ports:
+      - "127.0.0.1:5001:5001"
+    restart: unless-stopped
+    volumes:
+      - ipfs:/data/ipfs
+
+  postgres:
+    image: postgres:16
+    # The password below is committed to a public repository. That is survivable for a
+    # throwaway local database and only for as long as the port it opens is unreachable from
+    # anywhere but this machine.
+    ports:
+      - "127.0.0.1:5432:5432"
+    restart: unless-stopped
+    command: ["postgres", "-cshared_preload_libraries=pg_stat_statements", "-cmax_connections=200"]
+    environment:
+      POSTGRES_USER: graph-node
+      POSTGRES_PASSWORD: let-me-in
+      POSTGRES_DB: graph-node
+      # graph-node requires the C locale. Initialise the cluster with it or it refuses to
+      # start, after the database has already been created with the wrong collation.
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U graph-node -d graph-node"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - postgres:/var/lib/postgresql/data
+
+volumes:
+  ipfs:
+  postgres:

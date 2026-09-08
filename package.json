@@ -23,7 +23,8 @@
     "check:deployment": "tsx scripts/check-deployment.ts",
     "check:payout": "tsx scripts/check-payout.ts",
     "server": "tsx src/server/index.ts",
-    "pay": "tsx scripts/pay-once.ts"
+    "pay": "tsx scripts/pay-once.ts",
+    "subgraph:config": "tsx scripts/subgraph-config.ts"
   },
   "dependencies": {
     "@hiero-ledger/sdk": "^2.85.0",

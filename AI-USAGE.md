@@ -44,6 +44,8 @@ was rejected.
 | 2026-09-07 | Deployment to Hedera testnet (`scripts/deploy.ts`, `scripts/check-deployment.ts`, `src/pool/deployment.ts`) | Wrote the deploy script, the mirror-node verification and the committed deployment record | Decided the contract ships with no admin key, and that a deployment is verified from the ledger rather than from the receipt — a receipt only proves that *something* was created |
 | 2026-09-07 | The first pooled payout on testnet (`scripts/check-payout.ts`, `src/pool/client.ts`) | Wrote the coordinator's client over the Hedera SDK and the end-to-end check | Insisted the unit question be settled against the network rather than against the repository's own constant — which is what found the defect below |
 | 2026-09-07 | Lint and CI (`.github/workflows/ci.yml`) | Wrote the ESLint and solhint configs and the workflow, and ran both linters over the tree to find what they flagged | Decided that warnings fail the run, and that the three the test fixtures raise are turned off at the line with a reason rather than repo-wide; kept the Solidity line-length limit off the contract |
+| 2026-09-08 | The subgraph (`subgraph/`) | Read both sides of the hosting question - The Graph's supported-networks list and Hedera's own docs - then wrote the schema, the mappings and the graph-node configuration, and ran it against testnet until it returned the real pools | Set the question the mappings had to answer: what does the contract deliberately not keep. Rejected the first schema for calling the account entity `Payer`, which is wrong for a recipient credited by a failed payout |
+| 2026-09-08 | Hosting on Fly.io (`subgraph/fly/`) | Diagnosed the IPv4/IPv6 split and the Postgres collation and memory failures, and wrote the deployment configs and the split deploy path | Chose to self-host publicly rather than leave the index on a laptop, and refused the shortcut of publishing graph-node's unauthenticated admin port to make deployment easier |
 | 2026-09-08 | `specs/quorum-scheme.md` and ADR 0005 | Read the x402 v2 specification, its HTTP transport and the `exact` scheme documents, then drafted the scheme spec and the decision record against them | Set the design in a question-by-question session before a line was written: that a legacy `exact` client must still be able to pay, that entitlement is derived from chain state rather than held in a session, that pools are opened by the seller and never by the server, and that the scheme nests its hold binding rather than referencing it |
 
 ## 4. What was done without AI
@@ -184,10 +186,36 @@ disclosure the invention did not: that facilitator is the proposal author's own,
 only that "a facilitator serves `escrow`" would take it for independent uptake. Caught by the
 human, who wrote the facilitator.
 
-The 2026-09-08 entries above are the same shape as the ones before them, and the shape is now
-worth naming outright: **this tool states things about external specifications fluently and from
-memory, and the fluency is uncorrelated with whether the document says it.** Every one was caught
-by fetching the source; none was caught by thinking harder about it.
+**2026-09-08 — had the fact in hand, deployed anyway, and let the failure re-teach it.**
+Before the first Fly deploy, graph-node's listening sockets were inspected in the local
+container and found to be IPv4-only, with `/proc/net/tcp6` empty. That is the entire
+explanation for why `fly proxy` to the admin port would later fail against an IPv6-only
+private network — and it was read, noted, and then not carried into the deployment plan. The
+symptom arrived twenty minutes later as a connection reset with no explanation attached to it,
+and the same check had to be run a second time, on the Fly machine, to reach the conclusion
+that was already available. Reading evidence is not the same as acting on it.
+
+**2026-09-08 — took a tool's default for a decision.** `fly postgres create --vm-size
+shared-cpu-1x` was run without a memory flag, which is 256MB. graph-node's migrations get
+about forty entries into the list and the connection dies; the error is `server closed the
+connection unexpectedly`, which reads like a network fault and is an out-of-memory kill. Not
+choosing a size is still choosing one, and the size that came back was too small for the only
+thing the database was for.
+
+The 2026-09-08 entries fall into two shapes, and both are worth naming.
+
+Four of them repeat the shape the earlier ones had: **this tool states things about external
+specifications fluently and from memory, and the fluency is uncorrelated with whether the
+document says it.** The missing skip rule, the settlement payer, the v1 header and the `escrow`
+facilitator were each asserted before the source was opened, and each was caught by opening it —
+none by thinking harder about it.
+
+The two deployment entries run the other way, and cost more. Neither was a claim about a
+document: one was a fact already gathered and then not carried into the plan, the other a
+decision never recognised as one. There was no source to fetch, because neither was a question
+anyone had thought to ask — so both surfaced as a live deployment failing, and both times the
+error named a symptom rather than the cause. Reading cures the first shape. The second is only
+cured by treating a deployment as somewhere choices get made rather than defaults accepted.
 
 ## 6. Review, and what it caught
 
@@ -209,3 +237,32 @@ The pattern across all four is worth naming. None was a bug in the sense of a wr
 every one was a place where prose asserted a property the tests did not reach. That is the
 specific failure mode of building against a spec you also wrote — and the reason the review
 was given the spec and the ADRs rather than the session history.
+
+The subgraph got the same treatment, reviewed against the spec and the PR rather than the
+session that wrote it. Again no critical defect: event coverage, entity ids, the derived
+manifest and the unpublished admin port on Fly all held up when checked rather than taken on
+the branch's word.
+
+Three of the four things it did find rhyme with the contract review, and one does not.
+
+The rhyming ones: the pull request said "every contract state transition has a handler",
+which is true of every *emitted* transition and false for the one that emits nothing — a pool
+whose deadline passes reads `Open` here until somebody stamps it. And the mappings apply
+`Released`/`Refunded` unconditionally, though both are emitted before the transfer is
+attempted, so a rejected push is counted as money moved and money owed at once. Both are the
+same failure as before: a claim stated more broadly than the thing it describes, in prose that
+nothing could contradict.
+
+The one that does not rhyme is more useful. This branch *added* a CI check — for manifest
+drift, the risk it had just spent an afternoon thinking about — and did not notice that
+nothing in CI compiled the mappings at all. `subgraph/` has its own toolchain and sits outside
+the repo's lint and typecheck config, so it had been invisible to CI since the day it was
+created. The attention went to the freshly-imagined risk and not to the one that was already
+there, which is a bias worth naming because it will not announce itself: the check that gets
+written is the one you were already thinking about.
+
+A fourth was a plain inconsistency. `fly/graph-node.toml` refuses to publish graph-node's
+unauthenticated admin port and explains why at length; `docker-compose.yml`, written the same
+day, published it on every interface along with IPFS's RPC and postgres. The same question was
+answered twice, correctly once, and nothing reconciled the two — one file's reasoning does not
+propagate to another just because the same session wrote both.

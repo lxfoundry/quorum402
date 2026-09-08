@@ -1,0 +1,28 @@
+# Copy to docker-compose.override.yml if HTTPS fails from inside the container.
+#
+# The symptom is graph-node logging
+#
+#   certificate verify failed ... unable to get local issuer certificate
+#
+# against a URL that works fine from your shell. That is a TLS-inspecting antivirus or
+# corporate proxy on the host: it re-signs every certificate with a private root that Windows
+# or macOS trusts and the container has never heard of. Nothing to do with Hedera, and it does
+# not happen on a server.
+#
+# The fix is to hand the container a CA bundle that includes that root. Build one with the
+# image's own bundle as the base, so you are adding to the defaults rather than replacing
+# them:
+#
+#   docker run --rm --entrypoint cat graphprotocol/graph-node:v0.35.1 \
+#     /etc/ssl/certs/ca-certificates.crt > .certs/base-bundle.crt
+#   cat .certs/base-bundle.crt your-proxy-root.crt > .certs/ca-bundle.crt
+#
+# `.certs/` is gitignored: that root is specific to one machine, and in a public repo it is
+# noise at best.
+
+services:
+  graph-node:
+    environment:
+      SSL_CERT_FILE: /etc/ssl/local/ca-bundle.crt
+    volumes:
+      - ./.certs/ca-bundle.crt:/etc/ssl/local/ca-bundle.crt:ro

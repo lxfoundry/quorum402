@@ -1,0 +1,61 @@
+# The public graph-node.
+#
+# Same image and the same Hedera settings as docker-compose.yml - see that file for why each
+# of them is there, it is the one that explains them. What differs here is only what has to:
+# where Postgres and IPFS are, and which ports the outside world can reach.
+#
+#   fly deploy -c subgraph/fly/graph-node.toml
+#
+# The credential is not in this file and must never be. It is a Fly secret:
+#   fly secrets set postgres_pass=... -a quorum402-subgraph
+app = "quorum402-subgraph"
+primary_region = "ams"
+
+[build]
+  image = "graphprotocol/graph-node:v0.35.1"
+
+[env]
+  postgres_host = "quorum402-db.internal"
+  postgres_port = "5432"
+  postgres_user = "postgres"
+  postgres_db = "graph_node"
+  ipfs = "quorum402-ipfs.internal:5001"
+  ethereum = "testnet:https://testnet.hashio.io/api"
+  GRAPH_LOG = "info"
+
+  # --- Hedera-specific. Annotated in docker-compose.yml; kept identical here on purpose ---
+  ETHEREUM_BLOCK_BATCH_SIZE = "1"
+  ETHEREUM_POLLING_INTERVAL = "1000"
+  ETHEREUM_REORG_THRESHOLD = "0"
+  GRAPH_ETHEREUM_BLOCK_INGESTOR_MAX_CONCURRENT_JSON_RPC_CALLS_FOR_TXN_RECEIPTS = "100"
+  GRAPH_ETHEREUM_CLEANUP_BLOCKS = "true"
+  GRAPH_ETHEREUM_GENESIS_BLOCK_NUMBER = "0"
+  GRAPH_ETHEREUM_MAX_BLOCK_RANGE_SIZE = "1000"
+  GRAPH_ETHEREUM_MAX_EVENT_ONLY_RANGE = "50"
+
+# The admin RPC is not reachable from outside the machine at all - see the script's header.
+[[files]]
+  guest_path = "/admin-rpc.sh"
+  local_path = "admin-rpc.sh"
+
+# Queries, and only queries. Port 8020 is the admin JSON-RPC - it can deploy and delete
+# subgraphs and it has no authentication whatsoever - so it is never published.
+#
+# Nor is it reachable by proxy. `fly proxy 8020:8020` connects to the machine over the
+# private network, which is IPv6, and graph-node binds IPv4 only; the connection is accepted
+# locally and reset. The admin RPC is reached from inside the machine instead:
+#
+#   fly ssh console -a quorum402-subgraph -C "bash /admin-rpc.sh create quorum402"
+#
+# or, for the whole deploy, ./fly/deploy-subgraph.sh.
+[http_service]
+  internal_port = 8000
+  force_https = true
+  # An indexer that has stopped is an indexer that is behind. It stays running.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

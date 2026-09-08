@@ -21,6 +21,10 @@ export default tseslint.config(
       // Vendored third-party library, committed on purpose and never modified - see
       // CLAUDE.md and `.claude/skills/VENDORED.md`.
       ".claude/",
+      // The subgraph mappings are AssemblyScript, not TypeScript. They share the extension
+      // and nothing else - `i32` is a type there and a syntax error here - and `graph build`
+      // is the compiler that has an opinion about them.
+      "subgraph/",
     ],
   },
   js.configs.recommended,
