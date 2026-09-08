@@ -102,14 +102,36 @@ crosses the threshold, releases, and confirms on the mirror node that the recipi
 credited to the tinybar. It needs a funded testnet operator and the buyer accounts
 `npm run accounts:create` makes.
 
+## Deployed services
+
+| Service | What it serves | Endpoint |
+|---|---|---|
+| Subgraph | Pool state, indexed off Hedera testnet | <https://quorum402-subgraph.fly.dev/subgraphs/name/quorum402> |
+
+Live, and answerable without a wallet or a clone:
+
+```bash
+curl -s https://quorum402-subgraph.fly.dev/subgraphs/name/quorum402   -H 'content-type: application/json'   -d '{"query":"{ _meta { block { number } hasIndexingErrors } pools { id state seats threshold releasedTinybars deposits { hederaTxId tinybars counted refunded } } }"}'
+```
+
+The `hederaTxId` in that response is the x402 settlement the deposit was recorded against.
+Paste it into [HashScan](https://hashscan.io/testnet) and the payment is there — the index
+and the ledger are the same events, read twice.
+
+The graph-node behind it is **self-hosted, because there is no alternative**: Hedera is not on
+[The Graph's supported networks](https://thegraph.com/docs/en/supported-networks/), and
+Hedera's own hosted service is unavailable. [subgraph/README.md](subgraph/README.md) has the
+detail, and [subgraph/fly/](subgraph/fly/) is the deployment.
+
 ## Partner integrations
 
-Each row points at the **exact contract and lines** implementing the integration, so it can
-be verified without reading the whole tree.
+Each row points at the **exact files and lines** implementing the integration, so it can be
+verified without reading the whole tree.
 
 | Partner | What we use it for | Where in this repo |
 |---|---|---|
-| TODO | TODO | TODO |
+| **Hedera** | Settlement. A pool's funds are held by the contract's own Hedera account, credited by a native `CryptoTransfer` that runs no code and cannot be refused, and paid out in tinybars | [`QuorumPools.sol:226`](contracts/QuorumPools.sol#L226) records a settled payment · [`:300`](contracts/QuorumPools.sol#L300) releases · [`:336`](contracts/QuorumPools.sol#L336) refunds · [`:553`](contracts/QuorumPools.sol#L553) is the one place value moves · [`src/x402/hedera-exact.ts`](src/x402/hedera-exact.ts) builds the payment, [`facilitator.ts`](src/x402/facilitator.ts) settles it |
+| **The Graph** | Pool state. Who paid into which pool, whether it reached quorum in time, and where the money went — none of which the contract keeps, all of which it emits | [`subgraph/src/mappings.ts`](subgraph/src/mappings.ts) rebuilds state from events · [`subgraph/schema.graphql`](subgraph/schema.graphql) is what that state looks like · [`subgraph/subgraph.template.yaml`](subgraph/subgraph.template.yaml) binds it to the contract |
 
 ---
 
@@ -135,6 +157,7 @@ contracts/    the pool contract that holds a pool's funds, and its test support
 src/          the x402 wire types, the Hedera `exact` payment path, the deployment record
 scripts/      deployment, and checks against Hedera testnet that anyone can re-run
 deployments/  what is deployed where, and the hash that proves it is this code
+subgraph/     the subgraph, and the graph-node that has to run it - see subgraph/README.md
 test/         contract tests, run on a local EVM pinned to Hedera's target
 specs/        scheme spec, prompts and planning artifacts, written during the build
 AI-USAGE.md   where and how AI tooling was used, and what was done by hand

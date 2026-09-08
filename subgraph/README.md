@@ -91,6 +91,48 @@ A first query, once it has synced:
 }
 ```
 
+## Where it runs
+
+A subgraph nobody can reach is a subgraph nobody can check, so the same graph-node runs on
+Fly.io and answers publicly:
+
+**<https://quorum402-subgraph.fly.dev/subgraphs/name/quorum402>**
+
+Three apps, in [`fly/`](fly/), mirroring the three services in the compose file:
+
+| App | What it is | Reachable from |
+|---|---|---|
+| `quorum402-subgraph` | graph-node — [`fly/graph-node.toml`](fly/graph-node.toml) | the internet, port 8000 only |
+| `quorum402-ipfs` | kubo — [`fly/ipfs.toml`](fly/ipfs.toml) | the private network only |
+| `quorum402-db` | Postgres | the private network only |
+
+Redeploy the subgraph with:
+
+```bash
+./fly/deploy-subgraph.sh v0.0.5
+```
+
+Three things about that setup are worth knowing before you change any of it.
+
+**The admin port is never published.** Port 8020 creates and deletes subgraphs and has no
+authentication at all. Only 8000 is public.
+
+**Postgres needs the C collation and more than 256MB.** graph-node's migrations die partway
+through on a 256MB machine — the symptom is `server closed the connection unexpectedly` in the
+middle of the migration list, which reads like a network fault and is not one. The database
+also has to be created `LC_COLLATE 'C' LC_CTYPE 'C'` from `template0`, because Fly's default
+is `en_US.utf8`:
+
+```sql
+CREATE DATABASE graph_node TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C';
+```
+
+**graph-node binds IPv4 and Fly's private network is IPv6.** Fly's public proxy bridges that,
+which is why queries work. Nothing else does — `fly proxy` to port 8020 connects to the
+machine and finds nothing listening — which is why the deploy is split in two and why
+[`fly/admin-rpc.sh`](fly/admin-rpc.sh) exists. kubo is configured the other way, to listen on
+IPv6, or graph-node could not reach it at all.
+
 ## If HTTPS fails from inside the container
 
 Symptom, against a URL that works fine from your own shell:
