@@ -44,6 +44,8 @@ was rejected.
 | 2026-09-07 | Deployment to Hedera testnet (`scripts/deploy.ts`, `scripts/check-deployment.ts`, `src/pool/deployment.ts`) | Wrote the deploy script, the mirror-node verification and the committed deployment record | Decided the contract ships with no admin key, and that a deployment is verified from the ledger rather than from the receipt — a receipt only proves that *something* was created |
 | 2026-09-07 | The first pooled payout on testnet (`scripts/check-payout.ts`, `src/pool/client.ts`) | Wrote the coordinator's client over the Hedera SDK and the end-to-end check | Insisted the unit question be settled against the network rather than against the repository's own constant — which is what found the defect below |
 | 2026-09-07 | Lint and CI (`.github/workflows/ci.yml`) | Wrote the ESLint and solhint configs and the workflow, and ran both linters over the tree to find what they flagged | Decided that warnings fail the run, and that the three the test fixtures raise are turned off at the line with a reason rather than repo-wide; kept the Solidity line-length limit off the contract |
+| 2026-09-08 | The subgraph (`subgraph/`) | Read both sides of the hosting question - The Graph's supported-networks list and Hedera's own docs - then wrote the schema, the mappings and the graph-node configuration, and ran it against testnet until it returned the real pools | Set the question the mappings had to answer: what does the contract deliberately not keep. Rejected the first schema for calling the account entity `Payer`, which is wrong for a recipient credited by a failed payout |
+| 2026-09-08 | Hosting on Fly.io (`subgraph/fly/`) | Diagnosed the IPv4/IPv6 split and the Postgres collation and memory failures, and wrote the deployment configs and the split deploy path | Chose to self-host publicly rather than leave the index on a laptop, and refused the shortcut of publishing graph-node's unauthenticated admin port to make deployment easier |
 
 ## 4. What was done without AI
 
@@ -138,6 +140,22 @@ first passed *vacuously* - it compared the contract's balance view against the m
 before either had any money in it, `0 == 0` - and only failed two steps later, at the deposit.
 A check that cannot fail is not a check, and it was AI-written, in the same file that found
 the bug it was too weak to catch.
+
+**2026-09-08 — had the fact in hand, deployed anyway, and let the failure re-teach it.**
+Before the first Fly deploy, graph-node's listening sockets were inspected in the local
+container and found to be IPv4-only, with `/proc/net/tcp6` empty. That is the entire
+explanation for why `fly proxy` to the admin port would later fail against an IPv6-only
+private network — and it was read, noted, and then not carried into the deployment plan. The
+symptom arrived twenty minutes later as a connection reset with no explanation attached to it,
+and the same check had to be run a second time, on the Fly machine, to reach the conclusion
+that was already available. Reading evidence is not the same as acting on it.
+
+**2026-09-08 — took a tool's default for a decision.** `fly postgres create --vm-size
+shared-cpu-1x` was run without a memory flag, which is 256MB. graph-node's migrations get
+about forty entries into the list and the connection dies; the error is `server closed the
+connection unexpectedly`, which reads like a network fault and is an out-of-memory kill. Not
+choosing a size is still choosing one, and the size that came back was too small for the only
+thing the database was for.
 
 ## 6. Review, and what it caught
 
