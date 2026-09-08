@@ -73,7 +73,7 @@ TODO — the `quorum` scheme spec itself, as the implementation lands.
 
 | Contract | Network | Address | Explorer |
 |---|---|---|---|
-| [QuorumPools](contracts/QuorumPools.sol) | Hedera Testnet | `0.0.10409836` · `0x00000000000000000000000000000000009ed76c` | [HashScan](https://hashscan.io/testnet/contract/0.0.10409836) |
+| [QuorumPools](contracts/QuorumPools.sol) | Hedera Testnet | `0.0.10409980` · `0x00000000000000000000000000000000009ed7fc` | [HashScan](https://hashscan.io/testnet/contract/0.0.10409980) |
 
 The Hedera id is the one that matters: it is what a pool puts in the x402
 `PaymentRequirements.payTo`, so a buyer's payment lands **in the contract** rather than in
@@ -90,6 +90,17 @@ npm run build && npm run check:deployment
 reads the runtime bytecode back from the mirror node, hashes it against what this tree
 compiles to, and checks who can change it. The deployment record it checks against is
 [deployments/hedera-testnet.json](deployments/hedera-testnet.json).
+
+And the contract does what this page says it does — also checkable, against the real network:
+
+```bash
+npm run check:payout
+```
+
+opens a pool for one buyer, settles a real x402 payment into the contract, records it,
+crosses the threshold, releases, and confirms on the mirror node that the recipient was
+credited to the tinybar. It needs a funded testnet operator and the buyer accounts
+`npm run accounts:create` makes.
 
 ## Partner integrations
 

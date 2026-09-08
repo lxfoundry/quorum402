@@ -8,7 +8,6 @@ import {
   time,
   txId,
   viem,
-  weibars,
 } from "./helpers.js";
 
 describe("release", () => {
@@ -24,7 +23,7 @@ describe("release", () => {
       unit * BigInt(threshold),
     ]);
     await viem.assertions.balancesHaveChanged(tx, [
-      { address: recipient, amount: weibars(unit * BigInt(threshold)) },
+      { address: recipient, amount: unit * BigInt(threshold) },
     ]);
 
     assert.equal(await pools.read.statusOf([0n]), State.Released);
@@ -54,7 +53,7 @@ describe("release", () => {
 
     const tx = await pools.write.release([0n]);
     await viem.assertions.balancesHaveChanged(tx, [
-      { address: recipient, amount: weibars(unit * 2n) },
+      { address: recipient, amount: unit * 2n },
     ]);
 
     assert.equal(await pools.read.committedTinybars(), unit);
@@ -105,7 +104,7 @@ describe("release", () => {
     assert.equal(await pools.read.statusOf([0n]), State.Met);
     const tx = await pools.write.release([0n]);
     await viem.assertions.balancesHaveChanged(tx, [
-      { address: recipient, amount: weibars(unit * 2n) },
+      { address: recipient, amount: unit * 2n },
     ]);
   });
 

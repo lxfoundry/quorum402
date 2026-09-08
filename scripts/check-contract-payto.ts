@@ -24,7 +24,6 @@
  *      npm run check:payto -- --settle
  *      npm run check:payto -- --contract 0.0.10407447 --settle --amount 0.1
  */
-import { readFileSync, existsSync } from "node:fs";
 import { AccountId, Client, PrivateKey } from "@hiero-ledger/sdk";
 import { caip2, loadConfig } from "../src/config.js";
 import { Facilitator } from "../src/x402/facilitator.js";
@@ -36,9 +35,7 @@ import {
 } from "../src/x402/hedera-exact.js";
 import { settlementTxId } from "../src/x402/types.js";
 import type { PaymentRequirements, ResourceDescriptor } from "../src/x402/types.js";
-import type { GeneratedAccount } from "./create-accounts.js";
-
-const ACCOUNTS = ".accounts.json";
+import { loadBuyer } from "./accounts.js";
 
 const ok = (m: string) => console.log(`  ok    ${m}`);
 const bad = (m: string) => console.log(`  FAIL  ${m}`);
@@ -74,22 +71,6 @@ function parseArgs(argv: string[]): Args {
     }
   }
   return args;
-}
-
-function loadBuyer(label: string | undefined, expectedNetwork: string): GeneratedAccount {
-  if (!existsSync(ACCOUNTS)) {
-    throw new Error(`${ACCOUNTS} not found. Run: npm run accounts:create`);
-  }
-  const { network, accounts } = JSON.parse(readFileSync(ACCOUNTS, "utf8")) as {
-    network?: string;
-    accounts: GeneratedAccount[];
-  };
-  if (network && network !== expectedNetwork) {
-    throw new Error(`${ACCOUNTS} holds ${network} accounts but HEDERA_NETWORK is ${expectedNetwork}`);
-  }
-  const buyer = label ? accounts.find((a) => a.label === label) : accounts[0];
-  if (!buyer) throw new Error(`no such buyer "${label}"`);
-  return buyer;
 }
 
 /** The newest contract the mirror node knows about. Any contract answers the question. */

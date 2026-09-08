@@ -227,7 +227,7 @@ which is the single fact a reader most wants from it.
 ## The solvency invariant
 
 ```
-totalCommitted  <=  address(this).balance / TINYBAR_TO_WEIBAR
+totalCommitted  <=  address(this).balance
 ```
 
 Checked before every attribution. `totalCommitted` rises in `recordDeposit` and falls **only
@@ -337,7 +337,7 @@ the party watching. All three are permissionless.
 
 | | |
 |---|---|
-| **Weibars are not tinybars** | Hedera's EVM denominates HBAR in weibars, at `1 tinybar = 1e10 weibar`, so `address(this).balance` and `call{value:}` are **not** in the units x402 quotes. Keep the entire ledger in tinybars — matching `PaymentRequirements.amount` — and convert at exactly two places: the solvency check and the payout. One named constant, `TINYBAR_TO_WEIBAR` |
+| **The EVM speaks tinybars — weibars never appear** | ⚠️ **Corrected 2026-09-07, on testnet.** This row previously said the opposite, and the contract was written to it: that Hedera's EVM denominates HBAR in weibars at `1 tinybar = 1e10 weibar`, so the ledger had to convert at the solvency check and the payout. It does not. Inside the EVM, `address(this).balance` and `call{value:}` are **tinybars** — the same unit x402 quotes and this ledger keeps — so there is no conversion anywhere in the contract. 18-decimal weibars are what the **JSON-RPC relay** presents to Ethereum tooling, which is a different thing from what the EVM runs on. Evidence and the run that produced it are in item 3 below |
 | **Use `call`, not `transfer`** | The 2300-gas stipend is not a safe assumption here |
 | **Never derive accounting from `balance`** | It includes unattributed funds. `balance` appears only as the ceiling in the invariant |
 | **The recipient may be a long-zero address** | A Hedera account with an ED25519 key has no EVM alias; `0x00…0<num>` is its address and a valid value target |
@@ -360,14 +360,29 @@ Minutes each, and the first one can invalidate the design.
    no contract result, because no contract code ran. This is what
    [ADR 0004](adr/0004-deposits-that-cannot-be-refused.md) rests on: there was no moment at
    which the payment could have been rejected.
-3. ⬜ **Confirm the weibar conversion empirically with one throwaway payout.** *Still open, and
-   the refund arithmetic depends on it — but on a narrower question than this item first
-   claimed.* The tests define their own `TINYBAR_TO_WEIBAR` in `test/helpers.ts`, independent of
-   the contract's, and assertions that compare a contract-reported tinybar figure against a
-   test-computed weibar one do pin the two together. So the suite *does* catch a wrong constant
-   in the contract. What it cannot catch is both being wrong the same way — that `1 tinybar =
-   1e10 weibar` is Hedera's real ratio and not merely ours. That is documented rather than
-   guessed (1 HBAR = 1e8 tinybar = 1e18 weibar), and one real payout from a deployed contract
-   converts it from documented to observed.
+3. ✅ **Confirm the unit the EVM moves value in, with one real payout.**
+   **Done 2026-09-07 — and it inverted what this document assumed.** The contract was written
+   believing `address(this).balance` and `call{value:}` were denominated in weibars at
+   `1 tinybar = 1e10 weibar`, and converted at the solvency check and the payout. They are not.
+   Hedera's EVM counts in **tinybars**; the 18-decimal weibars are what the JSON-RPC relay
+   presents to Ethereum tooling, which is a different layer.
+
+   The evidence, in order. The first run funded contract `0.0.10409836` with a real x402
+   payment of 25,000,000 tinybars — the mirror node shows the credit — and then
+   `recordDeposit` reverted `Insolvent(wouldCommit=25000000, available=0)`. `available` is
+   `address(this).balance` divided by the assumed 1e10, so the balance the EVM saw was under
+   1e10: it was the tinybar figure, not the weibar one. Under the old constant *no deposit
+   could ever have been recorded* against anything less than 100,000 HBAR, and the contract
+   was unusable on the network it was written for.
+
+   Conversion removed, redeployed as `0.0.10409980`, and the second run settled a payment,
+   recorded it, met the threshold, released, and credited the recipient **exactly 25,000,000
+   tinybars** — which puts `call{value:}` on the same scale from the other end.
+
+   Worth naming precisely, because the local suite was not wrong so much as unable: it defined
+   its own copy of the constant and crossed it against the contract's, so it could prove the
+   two agreed with each other and nothing whatever about Hedera. The first check that could
+   have caught this ran against an empty contract, where `0 == 0` passes and means nothing.
+   Re-runnable: [`scripts/check-payout.ts`](../scripts/check-payout.ts).
 4. ⬜ **Does subgraph indexing reach Hedera testnet contracts, and through whose graph-node?**
    Still open. The Graph integration rests on it.

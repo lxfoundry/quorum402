@@ -14,13 +14,14 @@ pragma solidity 0.8.28;
  *         implements are in `specs/adr/0001`-`0004`.
  *
  *         The ledger is kept entirely in TINYBARS, matching what x402 quotes in
- *         `PaymentRequirements.amount`. Hedera's EVM denominates HBAR in weibars, so
- *         `TINYBAR_TO_WEIBAR` appears at exactly the two places value crosses into the EVM:
- *         the solvency ceiling and a payout. Nowhere else.
+ *         `PaymentRequirements.amount` - and matching what Hedera's EVM itself moves, so no
+ *         conversion appears anywhere in this contract. `address(this).balance` and
+ *         `call{value:}` are both denominated in tinybars here, which is NOT what a contract
+ *         written for Ethereum would assume: 18-decimal weibars are what the JSON-RPC relay
+ *         presents to Ethereum tooling, not what the EVM runs on. Observed on testnet, see
+ *         `scripts/check-payout.ts`.
  */
 contract QuorumPools {
-    /// 1 tinybar = 1e10 weibar. `address(this).balance` and `call{value:}` speak weibars.
-    uint256 internal constant TINYBAR_TO_WEIBAR = 1e10;
 
     enum State {
         Open,
@@ -241,7 +242,7 @@ contract QuorumPools {
         // crossed - or a refund being promised - against HBAR that never arrived.
         {
             uint256 wouldCommit = _totalCommitted + tinybars;
-            uint256 available = address(this).balance / TINYBAR_TO_WEIBAR;
+            uint256 available = address(this).balance;
             if (wouldCommit > available) revert Insolvent(wouldCommit, available);
             _totalCommitted = wouldCommit;
         }
@@ -460,7 +461,7 @@ contract QuorumPools {
 
     /// @notice This contract's HBAR balance, in tinybars. Includes funds never attributed.
     function balanceTinybars() external view returns (uint256) {
-        return address(this).balance / TINYBAR_TO_WEIBAR;
+        return address(this).balance;
     }
 
     /**
@@ -540,8 +541,8 @@ contract QuorumPools {
     }
 
     /**
-     * @dev Send tinybars, converting to weibars at the boundary. One of the two places in this
-     *      contract where the two units meet; the solvency check is the other.
+     * @dev Send tinybars. No conversion: Hedera's EVM denominates `value` in tinybars, the
+     *      same unit this contract's ledger is kept in.
      *
      *      `call` rather than `transfer`, because the 2300-gas stipend is not a safe assumption
      *      on Hedera. `_totalCommitted` falls only when the HBAR has actually left - a failed
@@ -549,7 +550,7 @@ contract QuorumPools {
      */
     function _payout(address to, uint256 tinybars) private returns (bool ok) {
         if (tinybars == 0) return true;
-        (ok,) = payable(to).call{value: tinybars * TINYBAR_TO_WEIBAR}("");
+        (ok,) = payable(to).call{value: tinybars}("");
         if (ok) _totalCommitted -= tinybars;
     }
 }

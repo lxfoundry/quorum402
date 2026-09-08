@@ -42,6 +42,7 @@ was rejected.
 | 2026-09-07 | `contracts/QuorumPools.sol` and its tests | Wrote the contract against the spec, and the test suite alongside it | Set the spec it was written against; directed the commit slicing so the history shows the work rather than the result |
 | 2026-09-07 | Solidity toolchain | Verified Hedera's compiler target from Hedera's own docs rather than assuming it, and pinned `evmVersion: cancun` to match | Decided against the deployment half of the usual toolbox, since deployment goes through the Hedera SDK already in the tree |
 | 2026-09-07 | Deployment to Hedera testnet (`scripts/deploy.ts`, `scripts/check-deployment.ts`, `src/pool/deployment.ts`) | Wrote the deploy script, the mirror-node verification and the committed deployment record | Decided the contract ships with no admin key, and that a deployment is verified from the ledger rather than from the receipt — a receipt only proves that *something* was created |
+| 2026-09-07 | The first pooled payout on testnet (`scripts/check-payout.ts`, `src/pool/client.ts`) | Wrote the coordinator's client over the Hedera SDK and the end-to-end check | Insisted the unit question be settled against the network rather than against the repository's own constant — which is what found the defect below |
 | 2026-09-07 | Lint and CI (`.github/workflows/ci.yml`) | Wrote the ESLint and solhint configs and the workflow, and ran both linters over the tree to find what they flagged | Decided that warnings fail the run, and that the three the test fixtures raise are turned off at the line with a reason rather than repo-wide; kept the Solidity line-length limit off the contract |
 
 ## 4. What was done without AI
@@ -116,6 +117,27 @@ it called a good deployment bad, which is survivable — but the habit behind it
 this file already records twice today: writing down a property the evidence had not been
 checked for. The fix names three cases and fails only on the one ADR 0003 cares about, an
 admin key held *outside* the contract.
+
+**2026-09-07 — the whole contract was written to a unit that Hedera does not use, and 60
+tests agreed with it.** The spec said Hedera's EVM denominates value in 18-decimal weibars, so
+`address(this).balance` and `call{value:}` were converted at `1 tinybar = 1e10 weibar`. They
+are not: the EVM counts in tinybars, and weibars are what the JSON-RPC relay shows Ethereum
+tooling. The consequence was total — no deposit could pass the solvency gate against a
+contract holding less than 100,000 HBAR — and nothing local could see it, because the tests
+define their own copy of the constant and cross it against the contract's. That comparison can
+only ever show that this repository agrees with itself.
+
+It is the day's fourth instance of one shape: a claim written down, then built on, without the
+evidence for it ever being fetched. The first three were prose overstating what the code did.
+This one ran the other way - prose the code obeyed - and it is the more dangerous direction,
+because the code cannot disagree with a premise it was derived from.
+
+What broke the loop was a check against something nobody here wrote: one real payment, on the
+real network, and the contract's own reverts as the evidence. Worth noting that the check
+first passed *vacuously* - it compared the contract's balance view against the mirror node's
+before either had any money in it, `0 == 0` - and only failed two steps later, at the deposit.
+A check that cannot fail is not a check, and it was AI-written, in the same file that found
+the bug it was too weak to catch.
 
 ## 6. Review, and what it caught
 
