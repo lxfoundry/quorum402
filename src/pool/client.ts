@@ -22,10 +22,61 @@ import type {
   ContractId,
   TransactionRecord,
 } from "@hiero-ledger/sdk";
+import { bytesToHex, decodeFunctionResult } from "viem";
+import type { Abi } from "viem";
+import { readArtifact } from "./deployment.js";
 
 /** Mirrors `QuorumPools.State`. Index is the on-chain enum value. */
 export const POOL_STATES = ["Open", "Met", "Expired", "Released"] as const;
 export type PoolState = (typeof POOL_STATES)[number];
+
+/**
+ * One pool's terms, as the contract stores them.
+ *
+ * `state` is the **stored** state, which is not always the effective one - a pool whose
+ * deadline has passed reads `Open` until something stamps it (ADR 0004's lazy expiry). Ask
+ * `statusOf` for the live answer; this is the terms, not the status.
+ */
+export interface PoolTerms {
+  poolId: bigint;
+  recipient: string;
+  coordinator: string;
+  unitTinybars: bigint;
+  threshold: number;
+  seats: number;
+  /** Unix seconds. */
+  deadline: number;
+  state: PoolState;
+  resourceUrl: string;
+}
+
+/** The shape `poolOf` returns once decoded, before it is narrowed into `PoolTerms`. */
+interface RawPool {
+  recipient: string;
+  coordinator: string;
+  unitTinybars: bigint;
+  threshold: number;
+  seats: number;
+  deadline: bigint;
+  state: number;
+  resourceUrl: string;
+}
+
+let abiCache: Abi | undefined;
+
+/**
+ * The compiled ABI, read once.
+ *
+ * Needed because `poolOf` returns a struct with a `string` in it, and the SDK's positional
+ * getters cannot read that: the return data is a tuple holding a dynamic tuple, so every
+ * word is one offset further along than its index suggests and `getString` resolves its
+ * offset against the wrong base. Reading it wrong would not throw - it would hand back a
+ * plausible pool with the fields shifted, which is the worst way for this to fail.
+ */
+function abi(): Abi {
+  abiCache ??= readArtifact().abi as Abi;
+  return abiCache;
+}
 
 /**
  * Gas limits, per call.
@@ -136,6 +187,43 @@ export class PoolsClient {
     return state;
   }
 
+  /** How many pools exist. Pools are append-only, so this only ever grows. */
+  async poolCount(): Promise<bigint> {
+    return BigInt(
+      (await this.queryUint256("poolCount", new ContractFunctionParameters())).toFixed(),
+    );
+  }
+
+  /**
+   * One pool's terms. Reverts `NoSuchPool` above `poolCount`, so callers bound the id first.
+   */
+  async poolOf(poolId: bigint): Promise<PoolTerms> {
+    const args = new ContractFunctionParameters().addUint256(long(poolId));
+    const data = await this.queryBytes("poolOf", args);
+    const raw = decodeFunctionResult({
+      abi: abi(),
+      functionName: "poolOf",
+      data,
+    }) as unknown as RawPool;
+
+    const state = POOL_STATES[raw.state];
+    if (!state) throw new Error(`poolOf(${poolId}) returned unknown pool state ${raw.state}`);
+    // `deadline` is a uint64 of unix seconds. It fits a JS number until the year 275760, and
+    // every clock comparison downstream is against `Date.now()`, so it is narrowed once here
+    // rather than at each of those call sites.
+    return {
+      poolId,
+      recipient: raw.recipient,
+      coordinator: raw.coordinator,
+      unitTinybars: raw.unitTinybars,
+      threshold: raw.threshold,
+      seats: raw.seats,
+      deadline: Number(raw.deadline),
+      state,
+      resourceUrl: raw.resourceUrl,
+    };
+  }
+
   /** Tinybars this contract owes to payers and recipients. Never derived from its balance. */
   async committedTinybars(): Promise<bigint> {
     return BigInt(
@@ -178,6 +266,17 @@ export class PoolsClient {
       .setFunction(fn, args)
       .execute(this.client);
     return result.getUint8(0);
+  }
+
+  /** Raw return data, for anything the SDK's positional getters cannot decode - see `abi()`. */
+  private async queryBytes(fn: string, args: ContractFunctionParameters): Promise<`0x${string}`> {
+    const result = await new ContractCallQuery()
+      .setContractId(this.contractId)
+      .setGas(50_000)
+      .setMaxQueryPayment(MAX_QUERY_PAYMENT)
+      .setFunction(fn, args)
+      .execute(this.client);
+    return bytesToHex(result.asBytes());
   }
 
   private async queryUint256(fn: string, args: ContractFunctionParameters) {
