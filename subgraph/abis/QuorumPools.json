@@ -1,0 +1,833 @@
+[
+  {
+    "inputs": [],
+    "name": "BadThreshold",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "BadUnitAmount",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "DeadlineInPast",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "hederaTxId",
+        "type": "string"
+      }
+    ],
+    "name": "DuplicateTransaction",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "wouldCommit",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "availableTinybars",
+        "type": "uint256"
+      }
+    ],
+    "name": "Insolvent",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NoCredit",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "depositId",
+        "type": "uint256"
+      }
+    ],
+    "name": "NoSuchDeposit",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      }
+    ],
+    "name": "NoSuchPool",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "caller",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "coordinator",
+        "type": "address"
+      }
+    ],
+    "name": "NotCoordinator",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "enum QuorumPools.State",
+        "name": "state",
+        "type": "uint8"
+      }
+    ],
+    "name": "NotDue",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "enum QuorumPools.State",
+        "name": "state",
+        "type": "uint8"
+      }
+    ],
+    "name": "NotMet",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "payer",
+        "type": "address"
+      }
+    ],
+    "name": "NothingToRefund",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "tinybars",
+        "type": "uint256"
+      }
+    ],
+    "name": "PayoutRejected",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "totalTinybars",
+        "type": "uint256"
+      }
+    ],
+    "name": "PoolTooLarge",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ZeroAddress",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ZeroAmount",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "payer",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "depositId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "tinybars",
+        "type": "uint64"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "hederaTxId",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint32",
+        "name": "seatsAfter",
+        "type": "uint32"
+      }
+    ],
+    "name": "DepositRecorded",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "payer",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "depositId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "tinybars",
+        "type": "uint64"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "hederaTxId",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "enum QuorumPools.LateReason",
+        "name": "reason",
+        "type": "uint8"
+      }
+    ],
+    "name": "LateDeposit",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "tinybars",
+        "type": "uint64"
+      }
+    ],
+    "name": "PayoutFailed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "coordinator",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "recipient",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "unitTinybars",
+        "type": "uint64"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint32",
+        "name": "threshold",
+        "type": "uint32"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "deadline",
+        "type": "uint64"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "resourceUrl",
+        "type": "string"
+      }
+    ],
+    "name": "PoolCreated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "at",
+        "type": "uint64"
+      }
+    ],
+    "name": "PoolExpired",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "payer",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "depositId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "tinybars",
+        "type": "uint64"
+      }
+    ],
+    "name": "Refunded",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "recipient",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "tinybars",
+        "type": "uint64"
+      }
+    ],
+    "name": "Released",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint32",
+        "name": "seats",
+        "type": "uint32"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "at",
+        "type": "uint64"
+      }
+    ],
+    "name": "ThresholdMet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "tinybars",
+        "type": "uint64"
+      }
+    ],
+    "name": "Withdrawn",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "balanceTinybars",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      }
+    ],
+    "name": "claimRefund",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "tinybars",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "committedTinybars",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "recipient",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "coordinator",
+        "type": "address"
+      },
+      {
+        "internalType": "uint64",
+        "name": "unitTinybars",
+        "type": "uint64"
+      },
+      {
+        "internalType": "uint32",
+        "name": "threshold",
+        "type": "uint32"
+      },
+      {
+        "internalType": "uint64",
+        "name": "deadline",
+        "type": "uint64"
+      },
+      {
+        "internalType": "string",
+        "name": "resourceUrl",
+        "type": "string"
+      }
+    ],
+    "name": "createPool",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "who",
+        "type": "address"
+      }
+    ],
+    "name": "creditOf",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "depositId",
+        "type": "uint256"
+      }
+    ],
+    "name": "depositAt",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "payer",
+            "type": "address"
+          },
+          {
+            "internalType": "uint64",
+            "name": "tinybars",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "counted",
+            "type": "bool"
+          },
+          {
+            "internalType": "bool",
+            "name": "refunded",
+            "type": "bool"
+          }
+        ],
+        "internalType": "struct QuorumPools.Deposit",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      }
+    ],
+    "name": "depositCount",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      }
+    ],
+    "name": "expire",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "poolCount",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      }
+    ],
+    "name": "poolOf",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "coordinator",
+            "type": "address"
+          },
+          {
+            "internalType": "uint64",
+            "name": "unitTinybars",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint32",
+            "name": "threshold",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "seats",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint64",
+            "name": "deadline",
+            "type": "uint64"
+          },
+          {
+            "internalType": "enum QuorumPools.State",
+            "name": "state",
+            "type": "uint8"
+          },
+          {
+            "internalType": "string",
+            "name": "resourceUrl",
+            "type": "string"
+          }
+        ],
+        "internalType": "struct QuorumPools.Pool",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "payer",
+        "type": "address"
+      },
+      {
+        "internalType": "uint64",
+        "name": "tinybars",
+        "type": "uint64"
+      },
+      {
+        "internalType": "string",
+        "name": "hederaTxId",
+        "type": "string"
+      }
+    ],
+    "name": "recordDeposit",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "depositId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "bool",
+        "name": "counted",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "startIndex",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "maxDeposits",
+        "type": "uint256"
+      }
+    ],
+    "name": "refundAll",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "refunded",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      }
+    ],
+    "name": "release",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "poolId",
+        "type": "uint256"
+      }
+    ],
+    "name": "statusOf",
+    "outputs": [
+      {
+        "internalType": "enum QuorumPools.State",
+        "name": "",
+        "type": "uint8"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "withdraw",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "tinybars",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "stateMutability": "payable",
+    "type": "receive"
+  }
+]

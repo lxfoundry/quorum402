@@ -39,6 +39,15 @@ jobs:
       - name: Build
         run: npm run build
 
+      # The subgraph's ABI and manifest are generated - from the compiled artifact and from
+      # the deployment record - so the committed copies can go stale without anything
+      # complaining. A stale ABI does not fail loudly; it indexes nothing and says nothing
+      # about why. No network needed: the start block lives in the deployment record.
+      - name: Subgraph config is current
+        run: |
+          npm run subgraph:config
+          git diff --exit-code subgraph/abis subgraph/subgraph.yaml
+
       - name: Lint
         run: npm run lint
 

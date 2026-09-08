@@ -30,6 +30,11 @@ export interface Deployment {
   evmAddress: string;
   transactionId: string;
   deployedAt: string;
+  /**
+   * The EVM block the creation landed in - what a subgraph indexes from. Optional because a
+   * deployment is complete without it; `npm run subgraph:config` looks it up and fills it in.
+   */
+  startBlock?: number;
   /** SHA-256 of the runtime bytecode, as returned by `codeHashOf`. */
   codeHash: string;
 }
