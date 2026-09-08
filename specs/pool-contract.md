@@ -384,5 +384,29 @@ Minutes each, and the first one can invalidate the design.
    two agreed with each other and nothing whatever about Hedera. The first check that could
    have caught this ran against an empty contract, where `0 == 0` passes and means nothing.
    Re-runnable: [`scripts/check-payout.ts`](../scripts/check-payout.ts).
-4. ⬜ **Does subgraph indexing reach Hedera testnet contracts, and through whose graph-node?**
-   Still open. The Graph integration rests on it.
+4. ✅ **Does subgraph indexing reach Hedera testnet contracts, and through whose graph-node?**
+   **Verified 2026-09-08 — through ours, because there is no other.** Hedera is absent from
+   [The Graph's supported networks](https://thegraph.com/docs/en/supported-networks/), so there
+   is no Studio and no decentralized network to deploy to; Hedera's own docs say its hosted
+   service is *"currently unavailable"* and that a local graph node is the route. Both sides
+   point at the same answer, and it is the only one.
+
+   It works, and on stock software: `graphprotocol/graph-node:v0.35.1`, no fork, pointed at the
+   public Hashio relay. It indexed `0.0.10409980` from its deployment block **40,229,764** to
+   chain head — `synced: true`, `health: healthy` — and returned both real pools with the x402
+   transaction ids intact, `0.0.7162784@1788803621.000267668` among them. `tinybarsReleased`
+   totalled **50,000,000** across the two, which is item 3's 25,000,000 twice, arrived at from
+   the log rather than from the contract.
+
+   Two constraints fall out of it, and both were already satisfied by accident rather than by
+   design, which is worth writing down before that stops being true:
+
+   - **Event handlers only.** The relay implements neither `trace_filter` nor `trace_block`, so
+     graph-node call handlers cannot run at all. The "every state transition emits" rule above
+     is what makes that a non-issue rather than a hole — it is now load-bearing, not tidy.
+   - **`startBlock` is not an optimisation.** Hedera testnet is past block 40,000,000 and the
+     relay caps `eth_getLogs` at 1,000 blocks, so a subgraph starting at zero is not slow, it is
+     arithmetically out of reach. From the deployment block the backfill is ~28,000 blocks and
+     under a minute.
+
+   Re-runnable: [`subgraph/README.md`](../subgraph/README.md).
