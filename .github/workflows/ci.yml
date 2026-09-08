@@ -54,6 +54,20 @@ jobs:
           npm run subgraph:config
           git diff --exit-code deployments subgraph/abis subgraph/subgraph.yaml
 
+      # The drift check above proves the manifest matches the contract. It does not prove the
+      # mappings still compile against it, and nothing else here does either: `subgraph/` has
+      # its own package.json and toolchain, sits outside this repo's tsconfig and eslint
+      # config, and is AssemblyScript rather than TypeScript. So a mapping that reads a schema
+      # field which no longer exists passes every other step in this job and fails at deploy
+      # time instead - which, for an indexer, means failing in front of whoever is deploying it
+      # rather than in front of whoever broke it.
+      - name: Subgraph compiles
+        working-directory: subgraph
+        run: |
+          npm ci
+          npx graph codegen
+          npx graph build
+
       - name: Lint
         run: npm run lint
 
