@@ -106,8 +106,14 @@ type Deposit @entity {
   counted: Boolean!
   "Set only when `counted` is false."
   lateReason: LateReason
-  "Seats held by the pool immediately after this deposit. Null for a late payment."
-  seatsAfter: Int
+  """
+  Seats the pool held once this deposit had been applied.
+
+  Always set. For a late payment that is the pool's seat count *unchanged*, which is what
+  being late means - the payment settled and took no seat. Read it against `counted` rather
+  than against null.
+  """
+  seatsAfter: Int!
 
   recordedAt: BigInt!
   recordedBlock: BigInt!
