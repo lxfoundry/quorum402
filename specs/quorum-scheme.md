@@ -116,14 +116,34 @@ authority on seat count is the hold binding's own state.
 ```jsonc
 {
   "x402Version": 2,
-  "scheme": "quorum",
-  "network": "hedera:testnet",
+  "resource": { "url": "https://example.test/resource/7" },
+  "accepted": {
+    "scheme": "quorum",
+    "network": "hedera:testnet",
+    "amount": "100000000",
+    "asset": "0.0.0",
+    "payTo": "0.0.10409980",
+    "maxTimeoutSeconds": 120,
+    "extra": {
+      "paymentFlow": "conditional",
+      "poolId": "7",
+      "threshold": 3,
+      "deadline": 1789171200,
+      "binding": { "scheme": "exact", "extra": { "feePayer": "0.0.7162784" } }
+    }
+  },
   "payload": {
     "poolId": "7",
     "binding": { "transaction": "<base64 partially signed TransferTransaction>" }
   }
 }
 ```
+
+`accepted` is the client's echo of the requirement it chose; `payload` is the scheme-specific
+data. **The echo is the client's statement, not evidence.** A server MUST validate it against what
+it actually advertised, MUST reject a payment whose `payload.poolId` disagrees with
+`accepted.extra.poolId`, and MUST ignore advisory fields in it — `filled` is stale by construction
+(§3), and a client's copy of it says nothing at all.
 
 `payload.binding` is **the hold binding's own payload, verbatim** — for the `exact` binding on
 Hedera, exactly the object that binding defines. A resource server unwraps it and passes it to the
@@ -164,11 +184,13 @@ Three things follow, and the third is a weakness this document does not hide.
   does. It receives a receipt rather than the resource (§6), is refunded automatically if the pool
   fails (§9), and can redeem whenever the pool succeeds (§8), because entitlement is derived from
   chain state and not from having understood the scheme.
-- **`upfront` is accurate about timing and cannot express conditionality.** A client reading only
-  protocol fields learns that its funds commit before the resource runs, and does not learn that
-  the resource may never run. The `description` MUST say so in prose, and prose is not something a
-  client is obliged to read. Offering the fallback trades this residual silence for reach; a
-  server that prefers not to make that trade may omit the entry.
+- **`upfront` is accurate about timing and cannot express conditionality** — and an entry has
+  nowhere to say more, because `PaymentRequirements` has no human-readable field. The warning has
+  to be carried at the response level instead, in `resource.description` and in `error`, which
+  belong to the whole `PaymentRequired` rather than to the entry a legacy client selects. So a
+  client reading protocol fields learns that its funds commit before the resource runs, and does
+  not learn that the resource may never run. This is the residual silence the fallback trades for
+  reach; a server unwilling to make that trade may omit the entry.
 
 ## 6. Lifecycle
 
@@ -380,7 +402,8 @@ add nothing the first three have not already established.
   That payment is recorded, not counted, and refundable at once — correct, but it costs the payer a
   transaction fee and a round trip.
 - **A redemption proof is replayable inside its validity window** (§8).
-- **A fallback payer is told about conditionality only in prose** (§5).
+- **A fallback payer is told about conditionality only in prose, and only at the response
+  level**, because an `accepts[]` entry has no field to carry it (§5).
 - **This scheme is proposed, not adopted.** No facilitator serves `quorum`, and none needs to: the
   facilitator only ever sees the binding's payment. But `paymentFlow: "conditional"` is a value no
   deployed client recognises, which is what makes the fallback entry load-bearing rather than
