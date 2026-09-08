@@ -177,3 +177,32 @@ The pattern across all four is worth naming. None was a bug in the sense of a wr
 every one was a place where prose asserted a property the tests did not reach. That is the
 specific failure mode of building against a spec you also wrote — and the reason the review
 was given the spec and the ADRs rather than the session history.
+
+The subgraph got the same treatment, reviewed against the spec and the PR rather than the
+session that wrote it. Again no critical defect: event coverage, entity ids, the derived
+manifest and the unpublished admin port on Fly all held up when checked rather than taken on
+the branch's word.
+
+Three of the four things it did find rhyme with the contract review, and one does not.
+
+The rhyming ones: the pull request said "every contract state transition has a handler",
+which is true of every *emitted* transition and false for the one that emits nothing — a pool
+whose deadline passes reads `Open` here until somebody stamps it. And the mappings apply
+`Released`/`Refunded` unconditionally, though both are emitted before the transfer is
+attempted, so a rejected push is counted as money moved and money owed at once. Both are the
+same failure as before: a claim stated more broadly than the thing it describes, in prose that
+nothing could contradict.
+
+The one that does not rhyme is more useful. This branch *added* a CI check — for manifest
+drift, the risk it had just spent an afternoon thinking about — and did not notice that
+nothing in CI compiled the mappings at all. `subgraph/` has its own toolchain and sits outside
+the repo's lint and typecheck config, so it had been invisible to CI since the day it was
+created. The attention went to the freshly-imagined risk and not to the one that was already
+there, which is a bias worth naming because it will not announce itself: the check that gets
+written is the one you were already thinking about.
+
+A fourth was a plain inconsistency. `fly/graph-node.toml` refuses to publish graph-node's
+unauthenticated admin port and explains why at length; `docker-compose.yml`, written the same
+day, published it on every interface along with IPFS's RPC and postgres. The same question was
+answered twice, correctly once, and nothing reconciled the two — one file's reasoning does not
+propagate to another just because the same session wrote both.
