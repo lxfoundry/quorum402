@@ -160,8 +160,18 @@ export async function quorumMissed(report: Reporter, params: ScenarioParams): Pr
       const filling = await pools.statusOf(poolId);
       report.expect(
         filling === "Open",
-        `pool ${poolId} is Open with ${payers.length} of ${threshold} seats - one short`,
+        `pool ${poolId} is Open`,
         `pool ${poolId} is ${filling}, expected Open`,
+      );
+      // Counted, not inferred from the 202s. `Open` on its own says nothing about seats: a
+      // deposit that settled late is attributed, takes no seat, and leaves the pool exactly as
+      // Open as this one is - so a run in which nobody was seated at all would pass every
+      // assertion above it and still print "one short". `poolOf` is the only thing that knows.
+      const { seats } = await pools.poolOf(poolId);
+      report.expect(
+        seats === payers.length,
+        `${seats} of ${threshold} seats taken - one short, which is the case worth proving`,
+        `pool ${poolId} holds ${seats} of ${threshold} seats, expected ${payers.length}`,
       );
 
       // Done now rather than after the deadline, because the index catches up inside time this
@@ -239,11 +249,16 @@ export async function quorumMissed(report: Reporter, params: ScenarioParams): Pr
           poolId: poolId.toString(),
           transaction: claimantTx,
         });
-        const reclaim = (refused.body as { reclaim?: Record<string, string> }).reclaim;
+        const body = refused.body as { error?: string; reclaim?: Record<string, string> };
+        const reclaim = body.reclaim;
+        // The status alone does not identify the refusal: `statusFor` answers 409 for `no-seat`
+        // as well, and that is a different story about a different payer - one who never took a
+        // seat, in a pool that may still be filling. Only `pool-expired` is §6's expired row.
         report.expect(
-          refused.status === 409,
-          `${claimant.label} was refused the resource, 409 - the pool expired short`,
-          `${claimant.label} got ${refused.status}, expected 409: ${JSON.stringify(refused.body)}`,
+          refused.status === 409 && body.error === "pool-expired",
+          `${claimant.label} was refused the resource, 409 pool-expired - it expired short`,
+          `${claimant.label} got ${refused.status} ${body.error}, expected 409 pool-expired: ` +
+            JSON.stringify(refused.body),
         );
         report.expect(
           reclaim?.contract === contractId &&
