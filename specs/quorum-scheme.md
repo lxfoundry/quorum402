@@ -436,6 +436,76 @@ late costs one retry, one refused slightly early costs a seat that will not open
 reason to sign a longer-lived receipt than the request it is about to make, and this one asks for
 two minutes.
 
+### 8.1 Redemption, as built
+
+The ordered checks above, drawn against what runs. Two things the prose can only assert and a
+diagram shows: **the deposit is never looked up until the signature verifies, and the ledger is
+never asked until the receipt is in date** — which is what stops an unsigned request learning
+whether a transaction or a seat exists — and the deposit is resolved in **two hops**, an index for
+the position and the contract for the facts, so no indexer can make a seat valid.
+
+The pool itself *is* read before any of that, because the server has to know whose terms the
+receipt is being checked against. That read discloses nothing a 402 on the same URL would not.
+
+```mermaid
+sequenceDiagram
+    actor B as Buyer<br/>(holds a 202 receipt)
+    participant RS as Resource server<br/>(coordinator)
+    participant M as Mirror node
+    participant G as Subgraph
+    participant P as Pool contract
+
+    Note over B: nothing is requested first —<br/>every fact signed is one the buyer already holds
+    B->>B: sign the §8 canonical message<br/>with the paying account's key
+    B->>RS: GET /resource + QUORUM-RECEIPT
+
+    Note over RS,G: no index wired → 501, before anything else.<br/>The transaction id lives only in the log
+    RS->>RS: decode the envelope → 401
+    RS->>P: poolCount, poolOf — does this pool sell this URL?
+    Note over RS,P: it does not → 401, the same answer as a bad<br/>signature: which pools exist is not disclosed here
+    RS->>P: statusOf(poolId)
+    P-->>RS: terms + live state, read once and carried
+
+    rect rgb(240, 246, 252)
+        Note over RS,M: rules 1-3 — proof first, and no deposit touched in here
+        RS->>RS: rule 1 · expired, or valid implausibly far ahead → 401
+        RS->>M: rule 2 · account's public key and network EVM address
+        M-->>RS: key{type, hex}, evmAddress
+        Note over RS,M: no key that can sign — threshold key,<br/>key list, contract account → 401
+        RS->>RS: rule 3 · verify over the exact bytes → 401<br/>(says only "does not verify" — never which field)
+    end
+
+    rect rgb(237, 247, 237)
+        Note over RS,P: rule 4 — the index gives a position, the contract answers for the row
+        RS->>G: deposit where pool = poolId and hederaTxId = transaction
+        alt no such row
+            G-->>RS: nothing
+            RS->>G: _meta.block.number
+            RS-->>B: 404 + indexedBlock — never settled, or not indexed yet
+        else found
+            G-->>RS: depositId
+            RS->>P: depositAt(poolId, depositId)
+            P-->>RS: payer, counted
+        end
+        RS->>RS: recorded payer ≠ this account → 403, not 401 —<br/>the proof was good, the claim was not theirs
+        RS->>RS: counted = false → 409 + where to reclaim
+    end
+
+    Note over RS: rule 5 — decided on the state already in hand
+    alt Met or Released
+        RS-->>B: 200 + resource
+        Note right of P: Released still entitles. Testing for Met alone would<br/>withhold the resource the moment the payout landed
+    else Open — the crowd has not arrived
+        RS-->>B: 202 + current fill
+    else Expired
+        RS-->>B: 409 + where to reclaim, not a retry
+    end
+```
+
+Nothing is written down on any path. The server holds no record that a seat was redeemed, so a
+restart, a second coordinator, or a third party with the same reads reaches the same answer —
+which is what "entitlement is derived from the hold binding's state" means in practice.
+
 ## 9. Reversal
 
 If the deadline passes without the threshold being met, every payer is owed their money.
