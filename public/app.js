@@ -15,6 +15,7 @@ const POLL_MS = 4000;
 let state = null;
 let wallet = localStorage.getItem("quorum402.wallet") || "";
 let busy = false;
+let polling = false;
 /** The licence a redemption returned, kept per pool so it survives the next poll. */
 const licences = new Map();
 
@@ -38,11 +39,17 @@ async function post(path, payload) {
 }
 
 async function refresh() {
+  // One request at a time. A poll that overtakes a slow one costs the server the whole read set
+  // twice over, exactly when it is already behind - and the answers could land out of order.
+  if (polling) return;
+  polling = true;
   try {
     state = await api(`state${wallet ? `?wallet=${encodeURIComponent(wallet)}` : ""}`);
     render();
   } catch (error) {
     console.error(error);
+  } finally {
+    polling = false;
   }
 }
 
@@ -65,6 +72,7 @@ async function act(button, work) {
     window.alert(error.message);
   } finally {
     busy = false;
+    button.disabled = false;
     button.textContent = wasLabel;
     await refresh();
   }
@@ -74,8 +82,9 @@ async function act(button, work) {
 
 function render() {
   if (!state) return;
-  renderWallets();
-  const me = state.wallets.find((w) => w.label === wallet);
+  // Returns the selection because it may also *change* it: a wallet that has gone away falls
+  // back to the first one, and everything below reads the wallet that survived that.
+  const me = renderWallets();
   const seller = me && me.role === "seller";
 
   $("left-title").textContent = seller ? "Services on offer" : "Services";
@@ -98,6 +107,7 @@ function renderWallets() {
   const me = state.wallets.find((w) => w.label === wallet);
   $("balance").textContent = me ? `${me.hbar} ℏ` : "—";
   $("account").textContent = me ? me.accountId : "";
+  return me;
 }
 
 /** A service, showing the pool a payment would actually land in — or that there is none. */
@@ -302,12 +312,14 @@ function dropdown(label, options) {
 
 function renderCrowd() {
   const buyers = state.wallets.filter((w) => w.role === "buyer");
-  const seated = new Map(state.seats.filter((s) => s.seat !== null).map((s) => [s.poolId, s.seat]));
   const pool = state.services.map((s) => s.pool).find((p) => p && p.state !== "Released");
+  // `state.seats` is only ever the selected wallet's, so this is one boolean about one buyer -
+  // the dot lights for whoever is being played, and the others stay dark.
+  const iAmSeated = pool && state.seats.some((s) => s.seat !== null && s.poolId === pool.poolId);
   $("crowd").replaceChildren(
     ...buyers.map((buyer) => {
       const who = el("span", "who");
-      const mine = buyer.label === wallet && pool && seated.has(pool.poolId);
+      const mine = buyer.label === wallet && iAmSeated;
       who.append(el("span", `dot${mine ? " seated" : ""}`));
       who.append(el("span", null, buyer.label));
       return who;
