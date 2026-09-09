@@ -118,3 +118,103 @@ describe("resolving a settlement to a deposit", () => {
     assert.equal(state.calls, 1);
   });
 });
+
+/**
+ * A buyer's own deposits - what the demo UI shows in "my seats".
+ *
+ * Not a §8 path: entitlement is still decided by the coordinator reading the contract. What these
+ * pin is the decoding, because every number arrives as a string and a pool state arrives as text
+ * that decides which button a payer is shown.
+ */
+describe("a buyer's deposits", () => {
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  /** Like `answering`, but keeps the variables it was asked with. */
+  function recording(body: unknown): { variables?: Record<string, unknown> } {
+    const state: { variables?: Record<string, unknown> } = {};
+    globalThis.fetch = (async (_url: unknown, init?: { body?: string }) => {
+      const sent = JSON.parse(init?.body ?? "{}") as { variables?: Record<string, unknown> };
+      state.variables = sent.variables;
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof globalThis.fetch;
+    return state;
+  }
+
+  const DEPOSIT = {
+    depositId: "1",
+    hederaTxId: TX,
+    tinybars: "10000000",
+    counted: true,
+    refunded: false,
+    seatsAfter: 2,
+    pool: {
+      poolId: "7",
+      state: "Open",
+      seats: 2,
+      threshold: 3,
+      deadline: "1788945600",
+      unitTinybars: "10000000",
+      resourceUrl: "http://localhost:4021/benchmark/agent-spend-eu",
+    },
+  };
+
+  it("decodes the deposit and the pool it landed in", async () => {
+    recording({ data: { deposits: [DEPOSIT], _meta: { block: { number: 4242 } } } });
+
+    const { deposits, indexedBlock } = await new GraphClient({ url: URL }).depositsFor("0xAb01");
+
+    assert.equal(indexedBlock, 4242n);
+    assert.equal(deposits.length, 1);
+    const [deposit] = deposits;
+    assert.equal(deposit?.depositId, 1n);
+    assert.equal(deposit?.transaction, TX);
+    assert.equal(deposit?.tinybars, 10_000_000n);
+    assert.equal(deposit?.counted, true);
+    assert.equal(deposit?.refunded, false);
+    // The seat number, for a counted deposit. Read against `counted`, never alone.
+    assert.equal(deposit?.seatsAfter, 2);
+    assert.equal(deposit?.pool.poolId, "7");
+    assert.equal(deposit?.pool.state, "Open");
+    assert.equal(deposit?.pool.threshold, 3);
+    assert.equal(deposit?.pool.deadline, 1_788_945_600);
+    assert.equal(deposit?.pool.unitTinybars, 10_000_000n);
+  });
+
+  it("asks in the case the index stores addresses in", async () => {
+    // A checksummed address matches nothing rather than failing, so the buyer would be shown an
+    // empty seat list and no error - the same trap `settlementFor` lowercases against.
+    const state = recording({ data: { deposits: [], _meta: null } });
+
+    await new GraphClient({ url: URL }).depositsFor("0xAbCdEf0123456789");
+
+    assert.equal(state.variables?.payer, "0xabcdef0123456789");
+  });
+
+  it("includes a payment that took no seat, because that is the refundable one", async () => {
+    const late = { ...DEPOSIT, depositId: "2", counted: false, seatsAfter: 3 };
+    recording({ data: { deposits: [late], _meta: null } });
+
+    const { deposits } = await new GraphClient({ url: URL }).depositsFor("0xab");
+
+    assert.equal(deposits.length, 1);
+    assert.equal(deposits[0]?.counted, false);
+  });
+
+  it("refuses a pool state it does not know rather than defaulting to one", async () => {
+    // Guessing here picks which button a payer is shown - Redeem or Claim refund - so a state
+    // this client cannot read has to stop the render, not produce a plausible one.
+    recording({
+      data: { deposits: [{ ...DEPOSIT, pool: { ...DEPOSIT.pool, state: "Settled" } }], _meta: null },
+    });
+
+    await assert.rejects(
+      new GraphClient({ url: URL }).depositsFor("0xab"),
+      /unknown pool state "Settled"/,
+    );
+  });
+});

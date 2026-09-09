@@ -18,6 +18,9 @@
  * "not indexed yet" as its own answer rather than as absence.
  */
 
+import { POOL_STATES } from "../pool/client.js";
+import type { PoolState } from "../pool/client.js";
+
 /**
  * What the index can say about one settled payment. A position, and how far it has read.
  *
@@ -38,6 +41,95 @@ export interface DepositLookup {
    * retried refusal on the path.
    */
   indexedBlock?: bigint;
+}
+
+/**
+ * One pool as the index holds it.
+ *
+ * `state` is the pool's **stored** state and disagrees with the chain in exactly one window: a
+ * pool past its deadline that nobody has stamped still reads `Open` here, because `PoolExpired`
+ * is emitted by `expire`, `claimRefund` and `refundAll` and by nothing else. The schema says so
+ * on the field itself. Read it against `deadline`, never alone.
+ */
+export interface IndexedPool {
+  poolId: string;
+  state: PoolState;
+  seats: number;
+  threshold: number;
+  /** Unix seconds. */
+  deadline: number;
+  unitTinybars: bigint;
+  resourceUrl: string;
+}
+
+/** One settled payment as the index holds it, with the pool it landed in. */
+export interface IndexedDeposit {
+  depositId: bigint;
+  /** The Hedera transaction id it settled under - the only place this survives. */
+  transaction: string;
+  tinybars: bigint;
+  /** Whether it took a seat. False means it settled late: refundable at once, entitling nothing. */
+  counted: boolean;
+  refunded: boolean;
+  /**
+   * Seats the pool held once this deposit had been applied - so, for a counted deposit, the seat
+   * number this payment took. For a late one it is the count *unchanged*, which is what being
+   * late means. Read it against `counted`.
+   */
+  seatsAfter: number;
+  pool: IndexedPool;
+}
+
+export interface IndexedDeposits {
+  deposits: IndexedDeposit[];
+  /** The last block the index has ingested - how far behind the chain this answer is. */
+  indexedBlock?: bigint;
+}
+
+/** The JSON as GraphQL sends it: every number a string, because they are all big integers. */
+interface RawIndexedDeposit {
+  depositId: string;
+  hederaTxId: string;
+  tinybars: string;
+  counted: boolean;
+  refunded: boolean;
+  seatsAfter: number;
+  pool: {
+    poolId: string;
+    state: string;
+    seats: number;
+    threshold: number;
+    deadline: string;
+    unitTinybars: string;
+    resourceUrl: string;
+  };
+}
+
+function toIndexedDeposit(raw: RawIndexedDeposit): IndexedDeposit {
+  const state = raw.pool.state as PoolState;
+  // A state this client does not know is a subgraph it does not know, and reporting `Open`
+  // instead would be a plausible answer - the worst kind of wrong for a field that decides
+  // whether a buyer is shown a Redeem button or a Refund one.
+  if (!POOL_STATES.includes(state)) {
+    throw new Error(`index reports unknown pool state "${raw.pool.state}" for pool ${raw.pool.poolId}`);
+  }
+  return {
+    depositId: BigInt(raw.depositId),
+    transaction: raw.hederaTxId,
+    tinybars: BigInt(raw.tinybars),
+    counted: raw.counted,
+    refunded: raw.refunded,
+    seatsAfter: raw.seatsAfter,
+    pool: {
+      poolId: raw.pool.poolId,
+      state,
+      seats: raw.pool.seats,
+      threshold: raw.pool.threshold,
+      deadline: Number(raw.pool.deadline),
+      unitTinybars: BigInt(raw.pool.unitTinybars),
+      resourceUrl: raw.pool.resourceUrl,
+    },
+  };
 }
 
 export interface GraphClientOptions {
@@ -162,6 +254,63 @@ export class GraphClient {
       payer: payerAddress.toLowerCase(),
     });
     return data.deposits[0]?.hederaTxId;
+  }
+
+  /**
+   * Every deposit this address has made, newest first, with the pool each one landed in.
+   *
+   * A convenience for the demo UI and **not** part of §8, like `settlementFor` above and for the
+   * same reason: entitlement is decided by the coordinator reading `payer` and `counted` back off
+   * the contract, and nothing here is a shortcut around that. This answers a different question -
+   * *which pools should I show this buyer* - and the contract cannot answer it at all, because it
+   * keeps no per-address list and forgets the transaction id entirely.
+   *
+   * Uncounted deposits are included. A payment that arrived too late took no seat and entitles
+   * nothing, but it is refundable at once and the payer is precisely who needs to be told so;
+   * filtering to `counted` would hide the money that most needs claiming.
+   *
+   * Bounded rather than paged. This exists to fill one screen.
+   */
+  async depositsFor(payerAddress: string, first = 25): Promise<IndexedDeposits> {
+    const query = `
+      query DepositsFor($payer: String!, $first: Int!) {
+        deposits(
+          where: { payerAddress: $payer }
+          orderBy: recordedAt
+          orderDirection: desc
+          first: $first
+        ) {
+          depositId
+          hederaTxId
+          tinybars
+          counted
+          refunded
+          seatsAfter
+          pool {
+            poolId
+            state
+            seats
+            threshold
+            deadline
+            unitTinybars
+            resourceUrl
+          }
+        }
+        _meta { block { number } }
+      }`;
+    const data = await this.request<{
+      deposits: RawIndexedDeposit[];
+      _meta?: { block?: { number?: number } } | null;
+    }>(query, {
+      // Lowercase for the same reason `settlementFor` does it: the index stores addresses that
+      // way, and a checksummed one matches nothing rather than failing.
+      payer: payerAddress.toLowerCase(),
+      first,
+    });
+    return {
+      deposits: data.deposits.map(toIndexedDeposit),
+      indexedBlock: blockOf(data._meta ?? undefined),
+    };
   }
 
   /**
