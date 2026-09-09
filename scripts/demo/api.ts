@@ -112,19 +112,25 @@ export function demoApi(ctx: DemoContext): Router {
  * Every route here answers with a JSON body and nothing else - none of them streams, and none
  * writes a header before its work is done - so the wrapper can own `res` entirely and each route
  * is left saying only what it computes.
+ *
+ * The write is inside the chain rather than beside it, because serialising the body can throw too -
+ * a BigInt reaches `res.json` from anything holding a raw ledger amount. That failure has to reach
+ * the same 500, so the `headersSent` guard stays: by then Express may already have answered.
  */
 function route(
   fn: (req: Request) => Promise<unknown>,
 ): (req: Request, res: Response) => void {
   return (req, res) => {
-    fn(req).then(
-      (body) => res.json(body),
-      (error: unknown) => {
+    Promise.resolve()
+      .then(() => fn(req))
+      .then((body) => {
+        res.json(body);
+      })
+      .catch((error: unknown) => {
         const detail = error instanceof Error ? error.message : String(error);
         console.error(`${req.method} ${req.originalUrl} failed: ${detail}`);
-        res.status(500).json({ error: detail });
-      },
-    );
+        if (!res.headersSent) res.status(500).json({ error: detail });
+      });
   };
 }
 
