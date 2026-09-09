@@ -294,7 +294,7 @@ sequenceDiagram
     B->>B: build TransferTransaction,<br/>sign — cannot submit alone
     B->>RS: GET /resource + PAYMENT-SIGNATURE
 
-    rect rgb(240, 246, 252)
+    rect rgba(120, 160, 255, 0.12)
         Note over RS,P: everything that can refuse runs here — the payer still has their money
         RS->>F: GET /supported — re-read per request, so a rotated fee payer is caught
         RS->>RS: payload matches an advertised entry (§7.1) → 400
@@ -313,7 +313,7 @@ sequenceDiagram
     H-->>P: HBAR credited — no contract code runs
     F-->>RS: success + hederaTxId
 
-    rect rgb(255, 247, 237)
+    rect rgba(255, 150, 60, 0.14)
         Note over RS,P: §7.6 — no path below returns a refusal
         RS->>P: recordDeposit(poolId, payerEvm, unit, hederaTxId)
         alt recorded
@@ -466,7 +466,7 @@ sequenceDiagram
     RS->>P: statusOf(poolId)
     P-->>RS: terms + live state, read once and carried
 
-    rect rgb(240, 246, 252)
+    rect rgba(120, 160, 255, 0.12)
         Note over RS,M: rules 1-3 — proof first, and no deposit touched in here
         RS->>RS: rule 1 · expired, or valid implausibly far ahead → 401
         RS->>M: rule 2 · account's public key and network EVM address
@@ -475,7 +475,7 @@ sequenceDiagram
         RS->>RS: rule 3 · verify over the exact bytes → 401<br/>(says only "does not verify" — never which field)
     end
 
-    rect rgb(237, 247, 237)
+    rect rgba(80, 200, 120, 0.14)
         Note over RS,P: rule 4 — the index gives a position, the contract answers for the row
         RS->>G: deposit where pool = poolId and hederaTxId = transaction
         alt no such row
@@ -494,7 +494,7 @@ sequenceDiagram
     Note over RS: rule 5 — decided on the state already in hand
     alt Met or Released
         RS-->>B: 200 + resource
-        Note right of P: Released still entitles. Testing for Met alone would<br/>withhold the resource the moment the payout landed
+        Note over P: Released still entitles — testing for<br/>Met alone would withhold the resource<br/>the moment the payout landed
     else Open — the crowd has not arrived
         RS-->>B: 202 + current fill
     else Expired
