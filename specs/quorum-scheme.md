@@ -270,6 +270,72 @@ against the pool without taking a seat — it arrived after the last one, or aft
 which case it is refundable immediately and `counted` is `false`. Reporting such a payment as a
 seat would be a lie the payer discovers only when redemption fails.
 
+### 6.2 The payment leg, as built
+
+One buyer taking one seat. The refusals are drawn where they actually happen, because *where* is
+the whole design: every one of them is on the left of the `/settle` line.
+
+```mermaid
+sequenceDiagram
+    actor B as Buyer
+    participant RS as Resource server<br/>(coordinator)
+    participant M as Mirror node
+    participant F as Facilitator
+    participant H as Hedera
+    participant P as Pool contract
+
+    B->>RS: GET /resource
+    RS->>P: poolCount, poolOf, statusOf
+    Note over RS: no open pool names this URL → 404
+    RS->>F: GET /supported
+    F-->>RS: feePayer for hedera:testnet
+    RS-->>B: 402 + PAYMENT-REQUIRED<br/>accepts[quorum, exact]
+
+    B->>B: build TransferTransaction,<br/>sign — cannot submit alone
+    B->>RS: GET /resource + PAYMENT-SIGNATURE
+
+    rect rgb(240, 246, 252)
+        Note over RS,P: everything that can refuse runs here — the payer still has their money
+        RS->>F: GET /supported — re-read per request, so a rotated fee payer is caught
+        RS->>RS: payload matches an advertised entry (§7.1) → 400
+        RS->>P: statusOf — pool closed since the 402 (§7.2) → 402
+        RS->>RS: transfer debits one account, pays this contract → 400
+        RS->>M: evm address of the paying account (§7.5) → 402
+        RS->>P: committedTinybars, balanceTinybars
+        Note over RS,P: ADR 0006 pre-flight: solvency, coordinator funding,<br/>replay — every recordDeposit precondition → 402
+    end
+
+    RS->>F: POST /verify — binding payload only (§7.3)
+    F-->>RS: isValid
+    RS->>F: POST /settle
+    Note right of F: irreversible from here
+    F->>H: add fee-payer signature, submit
+    H-->>P: HBAR credited — no contract code runs
+    F-->>RS: success + hederaTxId
+
+    rect rgb(255, 247, 237)
+        Note over RS,P: §7.6 — no path below returns a refusal
+        RS->>P: recordDeposit(poolId, payerEvm, unit, hederaTxId)
+        alt recorded
+            P-->>RS: depositId, counted
+        else recording will not land
+            RS->>RS: write the failure log line, for replay by hand
+            RS-->>B: 202 + PAYMENT-RESPONSE, counted: null
+        end
+    end
+
+    RS->>P: poolOf, statusOf
+    alt this payment took the last seat
+        RS-->>B: 200 + resource + receipt
+    else the pool is still short
+        RS-->>B: 202 + receipt — the row no other x402 flow has
+    end
+```
+
+A payment that settles and takes no seat — it arrived after the last one, or after the deadline —
+still ends at 202, with `counted: false` and a receipt that is refundable at once rather than
+redeemable. §6.1 forbids reporting that as a seat.
+
 ## 7. Resource server verification rules (MUST)
 
 1. **Match the payload to an advertised entry.** A `quorum` payload whose `poolId` does not name
