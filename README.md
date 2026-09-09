@@ -137,7 +137,8 @@ the deadline — then `exact` second, so a client that has never heard of this s
 pay for the resource by itself.
 
 ```bash
-curl -sD - -o /dev/null https://quorum402-coordinator.fly.dev/benchmark/agent-spend-eu | sed -n 's/^payment-required: //Ip' | tr -dc 'A-Za-z0-9+/=' | base64 -d
+# grep rather than sed's I flag, and openssl rather than base64 -d: both of those are GNU spellings and neither is on a stock macOS.
+curl -sD - -o /dev/null https://quorum402-coordinator.fly.dev/benchmark/agent-spend-eu | grep -i '^payment-required:' | cut -d' ' -f2- | tr -dc 'A-Za-z0-9+/=' | openssl base64 -A -d
 ```
 
 A **404** from that URL is not a broken deployment. The coordinator keeps no database and
