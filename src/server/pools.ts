@@ -67,6 +67,8 @@ export class PoolRegistry {
    */
   private readonly byUrl = new Map<string, bigint[]>();
   private scanned = 0n;
+  /** The scan currently reading forward, so concurrent callers join it rather than repeat it. */
+  private scanning: Promise<void> | undefined;
 
   constructor(
     private readonly reader: PoolReader,
@@ -128,12 +130,25 @@ export class PoolRegistry {
   }
 
   /**
-   * Read forward from the last pool this registry has seen.
+   * Read forward from the last pool this registry has seen, once at a time.
    *
    * Costs one `poolCount` call per request and one `poolOf` per pool that has appeared since
    * the last one - which is zero on almost every request.
+   *
+   * One at a time because `scanned` only moves at the end: two requests arriving together -
+   * which is the normal case, since a page showing every benchmark asks about each of them at
+   * once - would otherwise both read forward from the same point and push every new pool id
+   * into `byUrl` twice. Nothing would resolve to the wrong pool, but every later lookup would
+   * walk the duplicates and pay for a contract read per copy, for the life of the process.
    */
   private async scan(): Promise<void> {
+    this.scanning ??= this.readForward().finally(() => {
+      this.scanning = undefined;
+    });
+    return this.scanning;
+  }
+
+  private async readForward(): Promise<void> {
     const count = await this.reader.poolCount();
     for (let poolId = this.scanned; poolId < count; poolId++) {
       const terms = await this.reader.poolOf(poolId);

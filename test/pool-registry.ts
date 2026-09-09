@@ -55,6 +55,23 @@ function registryOver(pools: PoolTerms[], states?: PoolState[], guardSeconds = 3
 }
 
 describe("pool registry", () => {
+  it("reads forward once when two requests arrive together", async () => {
+    // The normal case, not a corner: a page showing every benchmark asks about each of them at
+    // once, so two lookups routinely enter the scan before either has finished. `scanned` only
+    // moves at the end, so without a guard both read forward from the same point and file every
+    // pool id twice - and each duplicate is a contract read, on every later lookup, forever.
+    const { registry, reads } = registryOver([terms(0n), terms(1n)]);
+
+    const [first, second] = await Promise.all([
+      registry.poolsFor(RESOURCE),
+      registry.poolsFor(RESOURCE),
+    ]);
+
+    assert.deepEqual(reads, [0n, 1n]);
+    assert.deepEqual(first, [0n, 1n]);
+    assert.deepEqual(second, [0n, 1n]);
+  });
+
   it("resolves a resource URL to the pool that named it", async () => {
     const { registry } = registryOver([terms(0n, { resourceUrl: OTHER }), terms(1n)]);
 
