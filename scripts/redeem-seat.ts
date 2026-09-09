@@ -12,7 +12,7 @@
  * That lookup is a convenience for running the demo, **not** part of the protocol: a buyer
  * normally keeps the id its own payment returned, and §8 asks it to present that.
  */
-import { Client, PrivateKey } from "@hiero-ledger/sdk";
+import { Client, ContractId, PrivateKey } from "@hiero-ledger/sdk";
 import { BENCHMARKS, benchmarkFor, resourceUrlFor } from "../src/benchmark/catalogue.js";
 import { redeemSeat } from "../src/buyer/agent.js";
 import { caip2, loadConfig } from "../src/config.js";
@@ -21,7 +21,6 @@ import { accountOf } from "../src/hedera/mirror.js";
 import { PoolsClient } from "../src/pool/client.js";
 import { readDeployment } from "../src/pool/deployment.js";
 import { PoolRegistry } from "../src/server/pools.js";
-import { ContractId } from "@hiero-ledger/sdk";
 import { loadBuyer } from "./accounts.js";
 
 const USAGE = `usage: npm run redeem -- <slug> [buyerLabel] [transactionId]\n  slugs: ${BENCHMARKS.map((b) => b.slug).join(", ")}`;
