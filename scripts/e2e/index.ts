@@ -116,6 +116,11 @@ export function cast(args: Args, network: string, operatorId: string, seats: num
         `Run: npm run accounts:create -- ${seats + 1}`,
     );
   }
+  // `quorumMet` takes the pool's threshold from this list, so a longer one would open a pool
+  // that neither the benchmark nor the seat count this run reports actually describes.
+  if (buyers.length > seats) {
+    throw new Error(`this pool needs exactly ${seats} buyers, --buyers named ${buyers.length}`);
+  }
   // One account paying twice is not a quorum - the contract enforces one seat per address, so
   // a duplicate here would silently buy nothing and the run would stall below its threshold.
   const ids = new Set(buyers.map((b) => b.accountId));
