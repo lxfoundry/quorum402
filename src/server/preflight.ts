@@ -70,6 +70,9 @@ export interface PreflightDeps {
    * the same payload carries the same transaction id, and Hedera refuses a duplicate
    * transaction id before it ever reaches the contract. Left injectable rather than assumed,
    * so wiring the index in later changes this file not at all.
+   *
+   * **May reject.** A rejection is no opinion, not a refusal - see the call below for why that
+   * rule belongs here rather than at whatever wires the index in.
    */
   isAlreadyRecorded?: (hederaTxId: string) => Promise<boolean>;
 }
@@ -125,7 +128,15 @@ export async function preflight(
     };
   }
 
-  if (deps.isAlreadyRecorded && (await deps.isAlreadyRecorded(params.hederaTxId))) {
+  // §6.2 and ADR 0006: a definite yes refuses, and nothing else does. The index lags, so it can
+  // never prove a payment is *new* - the contract's own guard stays the authority, and this
+  // only catches a duplicate early enough to save the payer a settlement. An index that cannot
+  // answer therefore has no opinion, because refusing good payments during an index outage
+  // would trade away the thing this scheme exists to do for a guard already enforced elsewhere.
+  //
+  // The rule lives here, with the gate, rather than in a `.catch` wherever the index is wired:
+  // a second caller would otherwise have to rediscover it from a comment.
+  if (deps.isAlreadyRecorded && (await recordedSays(deps.isAlreadyRecorded, params.hederaTxId))) {
     return {
       ok: false,
       reason: "duplicate-transaction",
@@ -134,4 +145,20 @@ export async function preflight(
   }
 
   return { ok: true };
+}
+
+/** A definite yes, or no opinion. An index that cannot answer never refuses a payment. */
+async function recordedSays(
+  ask: (hederaTxId: string) => Promise<boolean>,
+  hederaTxId: string,
+): Promise<boolean> {
+  try {
+    return await ask(hederaTxId);
+  } catch (error) {
+    // Logged, because otherwise an index outage is loud on the redemption path and completely
+    // silent here - two halves of one incident that would look unrelated.
+    const because = error instanceof Error ? error.message : String(error);
+    console.error(`replay check skipped for ${hederaTxId}: ${because}`);
+    return false;
+  }
 }

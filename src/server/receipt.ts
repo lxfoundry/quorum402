@@ -42,6 +42,16 @@ export type NextAction =
   | { action: "redeem"; when: string; header: string }
   | { action: "reclaim"; when: string; contract: string; method: string };
 
+/**
+ * The contract call a payer makes to get their money back - §9, and the one escape hatch this
+ * server is not involved in.
+ *
+ * One constant because two responses quote it: the receipt handed out at payment time, and the
+ * refusal a redemption gets when the seat did not happen. Re-signing `claimRefund` in the
+ * contract has to move both, and nothing else links them.
+ */
+export const CLAIM_REFUND = "claimRefund(uint256)";
+
 export function buildReceipt(params: {
   terms: PoolTerms;
   /** The pool as it stands *after* this payment was recorded. */
@@ -72,7 +82,7 @@ export function buildReceipt(params: {
         action: "reclaim",
         when: "deadline passes",
         contract: params.contractId,
-        method: "claimRefund(uint256)",
+        method: CLAIM_REFUND,
       },
     ],
   };

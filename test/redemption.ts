@@ -10,8 +10,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { PrivateKey } from "@hiero-ledger/sdk";
 import { MAX_VALIDITY_WINDOW_SECONDS, redeem, statusFor } from "../src/server/redeem.js";
-import type { LedgerAccount, RedeemDeps } from "../src/server/redeem.js";
-import { canonicalRedemptionMessage } from "../src/x402/redemption.js";
+import type { RedeemDeps } from "../src/server/redeem.js";
+import type { MirrorAccount } from "../src/hedera/mirror.js";
+import { signRedemptionReceipt } from "../src/x402/redemption.js";
 import type { RedemptionReceipt } from "../src/x402/redemption.js";
 import type { Deposit, PoolState, PoolTerms } from "../src/pool/client.js";
 
@@ -40,7 +41,7 @@ const counted: Deposit = { payer: PAYER, tinybars: 100_000_000n, counted: true, 
 const ecdsa = PrivateKey.generateECDSA();
 const ed25519 = PrivateKey.generateED25519();
 
-function ledgerAccount(key: PrivateKey, address = PAYER): LedgerAccount {
+function ledgerAccount(key: PrivateKey, address = PAYER): MirrorAccount {
   // Raw hex, which is what the mirror node reports: 32 bytes for ED25519, 33 compressed for
   // ECDSA. `toString()` is DER and would tell these two apart by the wrong number.
   const hex = key.publicKey.toStringRaw();
@@ -54,22 +55,15 @@ function sign(
   key: PrivateKey,
   overrides: Partial<RedemptionReceipt & { resource: string; contract: string; network: string }> = {},
 ): RedemptionReceipt {
-  const receipt = {
+  return signRedemptionReceipt(key, {
     accountId: overrides.accountId ?? ACCOUNT,
     poolId: overrides.poolId ?? "7",
     transaction: overrides.transaction ?? "0.0.7162784@1788894730.022621899",
     validUntil: overrides.validUntil ?? NOW_SECONDS + 300,
-  };
-  const message = canonicalRedemptionMessage({
-    ...receipt,
     network: overrides.network ?? NETWORK,
     contract: overrides.contract ?? CONTRACT,
     resource: overrides.resource ?? RESOURCE,
   });
-  return {
-    ...receipt,
-    signature: Buffer.from(key.sign(message)).toString("base64"),
-  };
 }
 
 function deps(overrides: Partial<RedeemDeps> = {}): RedeemDeps {
@@ -77,7 +71,7 @@ function deps(overrides: Partial<RedeemDeps> = {}): RedeemDeps {
     network: NETWORK,
     contractId: CONTRACT,
     accountOf: async () => ledgerAccount(ecdsa),
-    depositIdFor: async () => 0n,
+    depositFor: async () => ({ depositId: 0n }),
     depositAt: async () => counted,
     now: () => NOW_SECONDS * 1000,
     ...overrides,
@@ -99,7 +93,6 @@ describe("redeeming a seat", () => {
 
     assert.equal(result.ok, true);
     assert.equal(result.ok && result.payer, PAYER);
-    assert.deepEqual(result.ok && result.seat, { filled: 3, threshold: 3 });
   });
 
   it("still serves it after the pool has released", async () => {
@@ -180,16 +173,30 @@ describe("proofs that do not stand up", () => {
     assert.equal(!result.ok && result.reason, "invalid-proof");
   });
 
-  it("treats an unreadable account as a bad proof, not a server error", async () => {
-    // A threshold-key account reaches here. It cannot sign this message, and that is the
-    // payer's problem to see rather than a 500.
+  it("treats an account with no usable key as a bad proof, not a server error", async () => {
+    // A threshold-key account reaches here: it was read fine and cannot sign this message,
+    // which is the payer's problem to see rather than a 500. Unreadable is the test below.
     const result = await attempt({
-      accountOf: async () => {
-        throw new Error("account 0.0.1 has key type ProtobufEncoded, which cannot sign");
-      },
+      accountOf: async () => ({ evmAddress: PAYER }),
     });
 
     assert.equal(!result.ok && result.reason, "invalid-proof");
+    assert.equal(!result.ok && statusFor(result), 401);
+  });
+
+  it("does not blame the receipt when the ledger cannot be read", async () => {
+    // The fifth read on this path. "This account cannot sign" and "the mirror node is down"
+    // were one exception once, so both answered 401 - and the second is not a statement about
+    // the receipt at all.
+    const result = await attempt({
+      accountOf: async () => {
+        throw new Error("mirror node returned 503 for account 0.0.1");
+      },
+    });
+
+    assert.equal(!result.ok && result.reason, "index-unavailable");
+    assert.equal(!result.ok && statusFor(result), 503);
+    assert.doesNotMatch(!result.ok ? result.detail : "", /503|mirror node returned/);
   });
 });
 
@@ -200,9 +207,9 @@ describe("the checks run in §8's order", () => {
     let looked = false;
     const result = await attempt(
       {
-        depositIdFor: async () => {
+        depositFor: async () => {
           looked = true;
-          return 0n;
+          return { depositId: 0n };
         },
       },
       sign(PrivateKey.generateECDSA()),
@@ -231,10 +238,11 @@ describe("the checks run in §8's order", () => {
     // Order matters to the payer here, not just to the server: a late payment will never become
     // a seat, so answering 202 "still filling" would be telling them to wait forever.
     const late: Deposit = { ...counted, counted: false };
+    // The third argument is the live state `redeem` reads; `terms.state` is only what was last
+    // written down, and setting it here would suggest otherwise.
     const result = await attempt({ depositAt: async () => late }, sign(ecdsa), "Open", {
       ...terms,
       seats: 1,
-      state: "Open",
     });
 
     assert.equal(!result.ok && result.reason, "no-seat");
@@ -261,7 +269,7 @@ describe("claims that are real but do not entitle", () => {
   });
 
   it("answers 202 with the fill while the pool is still open", async () => {
-    const result = await attempt({}, sign(ecdsa), "Open", { ...terms, seats: 2, state: "Open" });
+    const result = await attempt({}, sign(ecdsa), "Open", { ...terms, seats: 2 });
 
     assert.equal(!result.ok && result.reason, "still-filling");
     assert.equal(!result.ok && statusFor(result), 202);
@@ -284,7 +292,7 @@ describe("an index that is behind", () => {
   it("does not tell a payer their payment does not exist", async () => {
     // The ordinary case: a redemption seconds after the settlement that funded it. Absence in
     // the index is lag until proven otherwise, and 404 here names both causes.
-    const result = await attempt({ depositIdFor: async () => undefined });
+    const result = await attempt({ depositFor: async () => ({}) });
 
     assert.equal(!result.ok && result.reason, "no-such-deposit");
     assert.equal(!result.ok && statusFor(result), 404);
@@ -292,25 +300,20 @@ describe("an index that is behind", () => {
   });
 
   it("reports how far the index has got, so the lag is diagnosable", async () => {
-    const result = await attempt({
-      depositIdFor: async () => undefined,
-      indexedBlock: async () => 4_242n,
-    });
+    // Carried on the same answer as the absence it explains, so the most retried refusal on
+    // this path costs one round trip rather than two.
+    const result = await attempt({ depositFor: async () => ({ indexedBlock: 4_242n }) });
 
     assert.equal(!result.ok && result.reason === "no-such-deposit" && result.indexedBlock, 4_242n);
   });
 
   it("still answers when the index cannot say where it has got to", async () => {
-    // A refusal that depended on a second call to the thing that just failed would turn a lagging
-    // index into a 500.
-    const result = await attempt({
-      depositIdFor: async () => undefined,
-      indexedBlock: async () => {
-        throw new Error("subgraph returned 502");
-      },
-    });
+    // An index can answer the deposit question and not the `_meta` one. The refusal is about
+    // the deposit, so it stands with the lag simply unreported.
+    const result = await attempt({ depositFor: async () => ({ indexedBlock: undefined }) });
 
     assert.equal(!result.ok && result.reason, "no-such-deposit");
+    assert.equal(!result.ok && result.reason === "no-such-deposit" && result.indexedBlock, undefined);
   });
 });
 
@@ -320,7 +323,7 @@ describe("an index that is down", () => {
     // index is a fact about this server. Answering 404 would tell a payer holding a good seat
     // that their payment never happened.
     const result = await attempt({
-      depositIdFor: async () => {
+      depositFor: async () => {
         throw new Error("fetch failed: ECONNREFUSED 127.0.0.1:8000");
       },
     });
@@ -331,7 +334,7 @@ describe("an index that is down", () => {
 
   it("keeps the upstream failure out of what the payer is told", async () => {
     const result = await attempt({
-      depositIdFor: async () => {
+      depositFor: async () => {
         throw new Error("subgraph error: Store error: database unavailable at 10.0.0.4:5432");
       },
     });
@@ -361,7 +364,7 @@ describe("an index that is down", () => {
     // verified, so a forged receipt gets 401 on a server whose index is down.
     const result = await attempt(
       {
-        depositIdFor: async () => {
+        depositFor: async () => {
           throw new Error("fetch failed");
         },
       },

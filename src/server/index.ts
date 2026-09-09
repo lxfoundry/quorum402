@@ -29,6 +29,7 @@ import type { Benchmark } from "../benchmark/catalogue.js";
 import { caip2, loadConfig } from "../config.js";
 import { GraphClient } from "../graph/client.js";
 import { accountOf, balanceTinybars, evmAddressOf } from "../hedera/mirror.js";
+import type { MirrorAccount } from "../hedera/mirror.js";
 import { PoolsClient } from "../pool/client.js";
 import type { PoolState, PoolTerms } from "../pool/client.js";
 import { readDeployment } from "../pool/deployment.js";
@@ -50,8 +51,8 @@ import type { PoolAvailability } from "./pools.js";
 import { preflight } from "./preflight.js";
 import type { SolvencyReader } from "./preflight.js";
 import { buildReceipt } from "./receipt.js";
-import { redeem, statusFor } from "./redeem.js";
-import type { LedgerAccount } from "./redeem.js";
+import { expiredProof, redeem, statusFor, unreadable } from "./redeem.js";
+import type { RedemptionRefusal } from "./redeem.js";
 import { settleAndRecord } from "./record.js";
 import { bindingRequirements, paymentRequired, quorumRequirements } from "./requirements.js";
 
@@ -74,14 +75,14 @@ export interface ServerDeps {
    * Also the payment path's address lookup, because it refuses an account that cannot sign -
    * see the call site for why that refusal belongs before the money moves.
    */
-  accountOf: (accountId: string) => Promise<LedgerAccount>;
+  accountOf: (accountId: string) => Promise<MirrorAccount>;
   coordinatorBalanceTinybars: () => Promise<bigint>;
   /**
    * The index that resolves a transaction id to a deposit - §8 step 4, and the only fact
    * consensus state cannot answer. Optional: without it the coordinator still sells seats and
    * settles payments, and only redemption is unavailable.
    */
-  index?: Pick<GraphClient, "depositFor" | "indexedBlock" | "isRecorded">;
+  index?: Pick<GraphClient, "depositFor" | "isRecorded">;
   /** Retry knobs, so a test does not wait out the backoff. */
   record?: { sleep?: (ms: number) => Promise<void>; attempts?: number; retryMs?: number };
 }
@@ -218,16 +219,29 @@ async function handle(deps: ServerDeps, req: Request, res: Response): Promise<vo
   // perfectly well and could never produce the §8 signature that redeems what it paid for.
   // Letting the payment through would sell a seat nothing can open, and the payer would find
   // out at redemption, having already parted with the money. §11 records the limitation.
-  let payer: string;
+  let account: MirrorAccount;
   try {
-    payer = (await deps.accountOf(transfer.transfer.payerAccountId)).evmAddress;
+    account = await deps.accountOf(transfer.transfer.payerAccountId);
   } catch (error) {
+    // The ledger could not be read - a fact about this server, not about the payer. Still 402,
+    // because §6 puts every pre-settlement refusal there and the payer's money has not moved,
+    // but the upstream text stays in the log: it describes how this coordinator is wired.
+    const because = error instanceof Error ? error.message : String(error);
+    console.error(`payment for ${resourceUrl} could not resolve the payer: ${because}`);
     res.status(402).json({
-      error: "the paying account could not hold a redeemable seat",
-      detail: error instanceof Error ? error.message : String(error),
+      error: "this payment cannot be settled right now",
+      detail: "the paying account could not be read from the ledger",
     });
     return;
   }
+  if (!account.key) {
+    res.status(402).json({
+      error: "the paying account could not hold a redeemable seat",
+      detail: `account ${transfer.transfer.payerAccountId} has no single key that could sign a redemption proof, so a seat bought here could never be opened`,
+    });
+    return;
+  }
+  const payer = account.evmAddress;
 
   const index = deps.index;
   const gate = await preflight(
@@ -238,15 +252,8 @@ async function handle(deps: ServerDeps, req: Request, res: Response): Promise<vo
       coordinatorBalanceTinybars: deps.coordinatorBalanceTinybars,
       // ADR 0006's replay check, and the one precondition only an index can answer: the
       // contract hashes settled transaction ids into a private set and exposes no getter.
-      //
-      // Deliberately the softest gate here. The index lags, so a `false` is never proof that a
-      // payment is new - the contract's own guard remains the authority, and this only catches
-      // a duplicate early enough to save the payer a settlement. An index that cannot answer
-      // must therefore not refuse a payment that is otherwise good, so a failure reads as no
-      // opinion rather than as a refusal.
-      isAlreadyRecorded: index
-        ? (hederaTxId: string) => index.isRecorded(hederaTxId).catch(() => false)
-        : undefined,
+      // What a failure to answer means is `preflight`'s rule, not this wiring's.
+      isAlreadyRecorded: index ? (hederaTxId: string) => index.isRecorded(hederaTxId) : undefined,
     },
     { availability: selling, hederaTxId: transfer.transfer.transactionId },
   );
@@ -370,6 +377,15 @@ async function redeemSeat(
     return;
   }
 
+  // §8 rule 1, before any read. `redeem` checks it again and cannot rely on this one, but every
+  // check below costs paid contract queries, and a receipt that is out of date should cost none
+  // of them - it is the cheapest request to send and would otherwise be the dearest to answer.
+  const stale = expiredProof(receipt);
+  if (stale) {
+    refuse(res, resourceUrl, stale);
+    return;
+  }
+
   // The pool must be one that sold this URL. `sellingPoolFor` is no help here and would be
   // wrong: by the time a seat is worth redeeming the pool has stopped selling, which is the
   // normal case rather than an error.
@@ -377,7 +393,7 @@ async function redeemSeat(
   try {
     pools = await deps.registry.poolsFor(resourceUrl);
   } catch (error) {
-    unavailable(res, resourceUrl, "the pools for this resource could not be read", error);
+    refuse(res, resourceUrl, unreadable("the pools for this resource could not be read", error));
     return;
   }
   const claimed = pools.find((poolId) => poolId.toString() === receipt.poolId);
@@ -393,7 +409,7 @@ async function redeemSeat(
   try {
     availability = await deps.registry.availability(claimed);
   } catch (error) {
-    unavailable(res, resourceUrl, "the pool's state could not be read", error);
+    refuse(res, resourceUrl, unreadable("the pool's state could not be read", error));
     return;
   }
   const { terms, state } = availability;
@@ -403,10 +419,8 @@ async function redeemSeat(
       network: deps.network,
       contractId: deps.contractId,
       accountOf: deps.accountOf,
-      depositIdFor: async (poolId, hederaTxId) =>
-        (await index.depositFor(poolId, hederaTxId))?.depositId,
+      depositFor: (poolId, hederaTxId) => index.depositFor(poolId, hederaTxId),
       depositAt: (poolId, depositId) => deps.pools.depositAt(poolId, depositId),
-      indexedBlock: () => index.indexedBlock(),
     },
     { receipt, resourceUrl, terms, state },
   );
@@ -428,35 +442,41 @@ async function redeemSeat(
     return;
   }
 
-  // Not an answer about the receipt at all, so it does not get the shape the others share.
-  if (outcome.reason === "index-unavailable") {
-    unavailable(res, resourceUrl, outcome.detail, outcome.cause);
-    return;
-  }
-
-  const body: Record<string, unknown> = { error: outcome.reason, detail: outcome.detail };
-  // §9 keeps reversal off this server, so a refusal that means "your money is owed back" says
-  // where to get it without this server being involved in the getting.
-  if (outcome.reason === "no-seat" || outcome.reason === "pool-expired") body.reclaim = outcome.reclaim;
-  if (outcome.reason === "still-filling") body.pool = poolSummary(terms, state);
-  if (outcome.reason === "no-such-deposit" && outcome.indexedBlock !== undefined) {
-    body.indexedBlock = outcome.indexedBlock.toString();
-  }
-  res.status(statusFor(outcome)).json(body);
+  refuse(res, resourceUrl, outcome, { terms, state });
 }
 
 /**
- * 503: a read this decision needed could not be made.
+ * One refusal, one response - §6's rows for redemption, in one place.
  *
- * The cause is logged and never sent. It is upstream text about how this coordinator is wired,
- * the payer can do nothing with it, and a refusal should not double as a description of the
- * server's dependencies. `Retry-After` because unlike every other refusal on this path, trying
- * again really is the right thing for this payer to do.
+ * Every refusal on this path comes through here, including the ones raised before the pool is
+ * known: `statusFor` owns the status, so a read that fails in the handler and one that fails
+ * inside `redeem` cannot answer differently, and a row that gains a header or a body field
+ * gains it once.
+ *
+ * A **503** carries `Retry-After`, because unlike every other refusal here, trying again really
+ * is the right thing for this payer to do - and its `cause` is logged and never sent. That text
+ * describes how this coordinator is wired; the payer can act on none of it, and a refusal is a
+ * poor place to publish it.
  */
-function unavailable(res: Response, resourceUrl: string, detail: string, cause: unknown): void {
-  const because = cause instanceof Error ? cause.message : String(cause);
-  console.error(`redemption for ${resourceUrl} could not be decided: ${detail} - ${because}`);
-  res.status(503).set("Retry-After", "5").json({ error: "index-unavailable", detail });
+function refuse(
+  res: Response,
+  resourceUrl: string,
+  refusal: RedemptionRefusal,
+  pool?: { terms: PoolTerms; state: PoolState },
+): void {
+  const body: Record<string, unknown> = { error: refusal.reason, detail: refusal.detail };
+  // §9 keeps reversal off this server, so a refusal that means "your money is owed back" says
+  // where to get it without this server being involved in the getting.
+  if (refusal.reason === "no-seat" || refusal.reason === "pool-expired") body.reclaim = refusal.reclaim;
+  if (refusal.reason === "still-filling" && pool) body.pool = poolSummary(pool.terms, pool.state);
+  if (refusal.reason === "no-such-deposit" && refusal.indexedBlock !== undefined) {
+    body.indexedBlock = refusal.indexedBlock.toString();
+  }
+  if (refusal.reason === "index-unavailable") {
+    console.error(`redemption for ${resourceUrl} could not be decided: ${refusal.detail} - ${refusal.cause}`);
+    res.set("Retry-After", "5");
+  }
+  res.status(statusFor(refusal)).json(body);
 }
 
 function poolSummary(terms: PoolTerms, state: PoolState) {

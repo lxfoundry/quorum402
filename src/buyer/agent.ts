@@ -20,7 +20,7 @@ import {
   decodeHeaderValue,
   encodeHeaderValue,
 } from "../x402/http.js";
-import { canonicalRedemptionMessage, encodeRedemptionReceipt } from "../x402/redemption.js";
+import { encodeRedemptionReceipt, signRedemptionReceipt } from "../x402/redemption.js";
 import { buildPartiallySignedTransfer } from "../x402/hedera-exact.js";
 import type {
   PaymentRequired,
@@ -150,11 +150,9 @@ function transactionIdOf(transactionBase64: string): string | undefined {
 }
 
 /** What a redemption attempt came back with. */
-export interface RedemptionResult {
+export interface RedemptionAttempt {
   status: number;
   body: unknown;
-  /** The receipt as presented, so a failed attempt can be re-sent or inspected by hand. */
-  presented: string;
 }
 
 /**
@@ -184,30 +182,22 @@ export async function redeemSeat(params: {
   poolId: string;
   /** The settlement the seat descends from - the transaction id the payment returned. */
   transaction: string;
-  now?: () => number;
-  validitySeconds?: number;
-}): Promise<RedemptionResult> {
-  const now = Math.floor((params.now?.() ?? Date.now()) / 1000);
-  const validUntil = now + (params.validitySeconds ?? RECEIPT_VALIDITY_SECONDS);
-  const message = canonicalRedemptionMessage({
-    accountId: params.accountId,
-    network: params.network,
-    contract: params.contractId,
-    poolId: params.poolId,
-    transaction: params.transaction,
-    resource: params.resourceUrl,
-    validUntil,
-  });
-  const presented = encodeRedemptionReceipt({
-    accountId: params.accountId,
-    poolId: params.poolId,
-    transaction: params.transaction,
-    validUntil,
-    signature: Buffer.from(params.key.sign(message)).toString("base64"),
-  });
+}): Promise<RedemptionAttempt> {
+  const validUntil = Math.floor(Date.now() / 1000) + RECEIPT_VALIDITY_SECONDS;
+  const presented = encodeRedemptionReceipt(
+    signRedemptionReceipt(params.key, {
+      accountId: params.accountId,
+      network: params.network,
+      contract: params.contractId,
+      poolId: params.poolId,
+      transaction: params.transaction,
+      resource: params.resourceUrl,
+      validUntil,
+    }),
+  );
 
   const res = await fetch(params.resourceUrl, {
     headers: { [QUORUM_RECEIPT_HEADER]: presented },
   });
-  return { status: res.status, body: await res.json(), presented };
+  return { status: res.status, body: await res.json() };
 }

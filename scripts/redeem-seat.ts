@@ -23,7 +23,7 @@ import { BENCHMARKS, benchmarkFor, resourceUrlFor } from "../src/benchmark/catal
 import { redeemSeat } from "../src/buyer/agent.js";
 import { caip2, loadConfig } from "../src/config.js";
 import { GraphClient } from "../src/graph/client.js";
-import { accountOf } from "../src/hedera/mirror.js";
+import { evmAddressOf } from "../src/hedera/mirror.js";
 import { PoolsClient } from "../src/pool/client.js";
 import { readDeployment } from "../src/pool/deployment.js";
 import { PoolRegistry } from "../src/server/pools.js";
@@ -73,8 +73,10 @@ async function main(): Promise<number> {
     if (candidates.length === 0) throw new Error(`no pool on ${network} names ${resourceUrl}`);
 
     // The address the *network* holds, not the one the key derives - the distinction that
-    // strands a seat, and the one §8 makes a rule of.
-    const { evmAddress } = await accountOf(cfg.mirrorUrl, buyer.accountId);
+    // strands a seat, and the one §8 makes a rule of. `evmAddressOf`, not `accountOf`: the
+    // address is the only thing wanted here, and whether this account's key can sign is a
+    // question the coordinator asks for itself at redemption.
+    const evmAddress = await evmAddressOf(cfg.mirrorUrl, buyer.accountId);
     const { poolId, transaction } = await locateSeat({
       candidates,
       poolArg,
@@ -179,7 +181,10 @@ async function locateSeat(params: {
   if (transactionArg) {
     for (const poolId of newestFirst) {
       const deposit = await graph.depositFor(poolId.toString(), transactionArg);
-      if (deposit) return { poolId, transaction: transactionArg };
+      // `depositFor` always answers with an object - `indexedBlock` rides along even when there
+      // is no row - so the position is the only field that says the index placed it here. A bare
+      // truthiness check passes on the first pool tried and reaches for the wrong seat.
+      if (deposit.depositId !== undefined) return { poolId, transaction: transactionArg };
     }
     throw new Error(
       `the index cannot place ${transactionArg} in any pool naming ${resourceUrl} (${named}). Either it has not caught up, or that settlement bought a seat somewhere else.`,

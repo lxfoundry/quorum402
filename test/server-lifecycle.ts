@@ -27,7 +27,7 @@ import {
 } from "../src/x402/http.js";
 import { buildPartiallySignedTransfer } from "../src/x402/hedera-exact.js";
 import type { PaymentRequired, QuorumPaymentPayload, SettlementResponse } from "../src/x402/types.js";
-import { canonicalRedemptionMessage, encodeRedemptionReceipt } from "../src/x402/redemption.js";
+import { encodeRedemptionReceipt, signRedemptionReceipt } from "../src/x402/redemption.js";
 import type { Deposit, PoolState, PoolTerms } from "../src/pool/client.js";
 
 const BASE = "https://quorum402.example";
@@ -83,8 +83,8 @@ interface Stubs {
   coordinatorBalance?: bigint;
   /** The deposit the contract reports at the index the log gave. */
   deposit?: Deposit;
-  /** What the index resolves a transaction id to. `undefined` means "not indexed". */
-  indexedDepositId?: bigint | undefined;
+  /** Run as though the index has not reached the payment yet. */
+  notIndexed?: boolean;
   /** Run with no index at all, as a deployment with `SUBGRAPH_URL` unset does. */
   noIndex?: boolean;
   /** An index that is wired but unreachable, as distinct from one that is behind. */
@@ -95,11 +95,11 @@ interface Stubs {
   alreadyRecorded?: boolean;
   /** The replay check itself failing, as distinct from answering `false`. */
   isRecordedThrows?: boolean;
-  /** The ledger's answer about an account. Throws for a key that cannot sign. */
+  /** The ledger's answer about an account. A key that cannot sign is a missing `key`, not a throw. */
   accountOf?: ServerDeps["accountOf"];
 }
 
-function deps(stubs: Stubs = {}): ServerDeps & { logged: string[] } {
+function deps(stubs: Stubs = {}): ServerDeps & { logged: string[]; reads: string[] } {
   const pool = stubs.pool ?? terms();
   const readBack = stubs.after ?? pool;
   const logged: string[] = [];
@@ -107,16 +107,26 @@ function deps(stubs: Stubs = {}): ServerDeps & { logged: string[] } {
   // stub has to put the pool under its own id rather than answering with it for every id.
   // Redemption looks a pool up *by the id in the receipt*, and a stub that ignores the id
   // would make that lookup untestable.
+  const reads: string[] = [];
   const reader: PoolReader = {
-    poolCount: async () => pool.poolId + 1n,
-    poolOf: async (poolId) =>
-      poolId === pool.poolId
+    poolCount: async () => {
+      reads.push("poolCount");
+      return pool.poolId + 1n;
+    },
+    poolOf: async (poolId) => {
+      reads.push("poolOf");
+      return poolId === pool.poolId
         ? pool
-        : terms({ poolId, resourceUrl: `${BASE}/benchmark/unrelated-${poolId}` }),
-    statusOf: async () => stubs.state ?? "Open",
+        : terms({ poolId, resourceUrl: `${BASE}/benchmark/unrelated-${poolId}` });
+    },
+    statusOf: async () => {
+      reads.push("statusOf");
+      return stubs.state ?? "Open";
+    },
   };
   return {
     logged,
+    reads,
     registry: new PoolRegistry(reader),
     pools: {
       poolOf: async () => readBack,
@@ -163,13 +173,10 @@ function deps(stubs: Stubs = {}): ServerDeps & { logged: string[] } {
             if (stubs.indexThrows) {
               throw new Error("subgraph error: Store error: database unavailable at 10.0.0.4");
             }
-            const depositId =
-              "indexedDepositId" in stubs ? stubs.indexedDepositId : 0n;
-            return depositId === undefined
-              ? undefined
-              : { depositId, payerAddress: BUYER_EVM, counted: true };
+            return stubs.notIndexed
+              ? { indexedBlock: 4_242n }
+              : { depositId: 0n, indexedBlock: 4_242n };
           },
-          indexedBlock: async () => 4_242n,
           isRecorded: async () => {
             if (stubs.isRecordedThrows) throw new Error("subgraph returned 502");
             return stubs.alreadyRecorded ?? false;
@@ -204,22 +211,17 @@ async function request(
 function receipt(
   over: { poolId?: string; transaction?: string; validUntil?: number; resource?: string } = {},
 ): string {
-  const claim = {
-    accountId: BUYER,
-    poolId: over.poolId ?? "7",
-    transaction: over.transaction ?? "0.0.7162784@1788894730.022621899",
-    validUntil: over.validUntil ?? Math.floor(Date.now() / 1000) + 300,
-  };
-  const message = canonicalRedemptionMessage({
-    ...claim,
-    network: "hedera:testnet",
-    contract: CONTRACT,
-    resource: over.resource ?? RESOURCE,
-  });
-  return encodeRedemptionReceipt({
-    ...claim,
-    signature: Buffer.from(buyerKey.sign(message)).toString("base64"),
-  });
+  return encodeRedemptionReceipt(
+    signRedemptionReceipt(buyerKey, {
+      accountId: BUYER,
+      poolId: over.poolId ?? "7",
+      transaction: over.transaction ?? "0.0.7162784@1788894730.022621899",
+      validUntil: over.validUntil ?? Math.floor(Date.now() / 1000) + 300,
+      network: "hedera:testnet",
+      contract: CONTRACT,
+      resource: over.resource ?? RESOURCE,
+    }),
+  );
 }
 
 /** A payment a buyer would actually send, against the terms the server is advertising. */
@@ -330,9 +332,28 @@ describe("§6 lifecycle", () => {
     // seat this payment would buy could never be opened. Refusing costs the payer a round trip;
     // settling would cost them the money.
     let settled = false;
+    const d = deps({ accountOf: async () => ({ evmAddress: BUYER_EVM }) });
+    d.facilitator.settle = async () => {
+      settled = true;
+      return { success: true };
+    };
+
+    const res = await request(d, `/benchmark/${SLUG}`, { [PAYMENT_SIGNATURE_HEADER]: await payment() });
+
+    assert.equal(res.status, 402);
+    assert.match(String(res.body.error), /redeemable seat/);
+    assert.equal(settled, false);
+  });
+
+  it("402s without repeating the ledger's words, when the account cannot be read", async () => {
+    // The sibling of the test above, asking a different question: that account was read and has
+    // no usable key, this one could not be asked. §6 keeps both at 402 because no money has
+    // moved - but the mirror's own text describes how this coordinator is wired, so it goes to
+    // the log and not to the payer, who can do nothing with it either way.
+    let settled = false;
     const d = deps({
       accountOf: async () => {
-        throw new Error("account 0.0.1001 has key type ProtobufEncoded, which cannot sign");
+        throw new Error("mirror node returned 503 for account 0.0.1001");
       },
     });
     d.facilitator.settle = async () => {
@@ -343,7 +364,8 @@ describe("§6 lifecycle", () => {
     const res = await request(d, `/benchmark/${SLUG}`, { [PAYMENT_SIGNATURE_HEADER]: await payment() });
 
     assert.equal(res.status, 402);
-    assert.match(String(res.body.error), /redeemable seat/);
+    assert.match(String(res.body.detail), /could not be read from the ledger/);
+    assert.doesNotMatch(JSON.stringify(res.body), /503|mirror node/);
     assert.equal(settled, false);
   });
 
@@ -541,6 +563,19 @@ describe("§6 lifecycle", () => {
     assert.equal(res.status, 401);
   });
 
+  it("refuses an out-of-date receipt without reading the chain at all", async () => {
+    // §8 rule 1 is the only check that needs no network, and it is the cheapest request anyone
+    // can send. Running it after the pool reads would charge three paid contract queries to
+    // answer a receipt whose own clock already refuses it.
+    const d = deps();
+    const res = await request(d, `/benchmark/${SLUG}`, {
+      [QUORUM_RECEIPT_HEADER]: receipt({ validUntil: Math.floor(Date.now() / 1000) - 600 }),
+    });
+
+    assert.equal(res.status, 401);
+    assert.deepEqual(d.reads, []);
+  });
+
   it("503s rather than 500s when the index cannot be reached", async () => {
     // A behind index and a down index are different answers. The first is 404 with the lag
     // reported; the second must not tell a seat holder their payment does not exist, and must
@@ -567,7 +602,7 @@ describe("§6 lifecycle", () => {
 
   it("404s a payment the index has not caught up with, and says how far it has got", async () => {
     // The ordinary case for a buyer redeeming seconds after the settlement that funded it.
-    const res = await request(deps({ indexedDepositId: undefined }), `/benchmark/${SLUG}`, {
+    const res = await request(deps({ notIndexed: true }), `/benchmark/${SLUG}`, {
       [QUORUM_RECEIPT_HEADER]: receipt(),
     });
 
