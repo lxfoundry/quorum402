@@ -94,7 +94,7 @@ export function decodePaymentHeader(header: string): PaymentPayload {
   return JSON.parse(Buffer.from(header, "base64").toString("utf8")) as PaymentPayload;
 }
 
-export const TINYBARS_PER_HBAR = 100_000_000n;
+const TINYBARS_PER_HBAR = 100_000_000n;
 
 /** A plain decimal HBAR amount, at most 8 fractional digits. No exponent form. */
 const HBAR_DECIMAL = /^\d+(?:\.\d{1,8})?$/;
