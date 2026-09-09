@@ -563,7 +563,8 @@ the assertion it broke but the four steps behind it that never got to run.
 The demo-UI branch was reviewed again after it merged, this time by four Claude Code agents run
 in parallel and told explicitly *not* to look for bugs: one each for duplication, unnecessary
 complexity, wasted work, and whether a fix sat at the right depth. They were given the diff and
-the tree, not the conversation. Nine commits came out of it.
+the tree, not the conversation. What came out of it was a branch of small commits — and then a
+second review, which found something the first one had introduced.
 
 The finding worth recording is the one the code had already claimed was impossible. `poolSummary`
 had been exported the week before, carrying a comment that it was exported *"because the demo UI
@@ -598,6 +599,33 @@ to fix a problem that was not there. Two agents, ranked high and independently, 
 preferring the chain's resolved state over the locally-derived one. That is a real inconsistency
 and possibly worth doing, but it changes which clock decides that a pool has expired; it was
 filed as a cleanup and it is not one.
+
+**The cleanup that could have killed the demo.** One finding was that all six demo handlers ended
+in `res.json(...)`, with `res` threaded through the route wrapper only to be called at the end.
+That is a real duplication and the repair — let the wrapper own the write — is the obvious one. It
+shipped in `50e36e1` with the write passed as `.then`'s first argument and the error handler as
+its second, which makes the two siblings rather than putting the handler downstream of the write,
+and drops the promise `.then` returns. A handler resolving with a `BigInt` — which any raw ledger
+amount is — throws inside `res.json`, and that throw then had nowhere to go: no 500, no log line,
+an unhandled rejection, and Node ends the process on those. The one failure the wrapper existed to
+catch was the one it stopped catching.
+
+Nothing in the repo noticed. Lint, `tsc` and the full suite passed, because the defect is a
+dropped promise on a path no test drove. It was caught in review on the pull request, two commits
+later, and fixed in `be96423`.
+
+That is a sharper case than the rest of this section. The other entries are about proposed changes
+that should not have been applied. This one *was* applied, and correctly identified — the
+duplication was real — and the repair introduced a way to take the process down. The lesson is not
+that the finding was wrong. It is that acting on a correct finding is itself a code change, and it
+needs the same review as the code that prompted it.
+
+**A correction to the record.** `be96423`'s message describes the bug as `res.json` having been
+handed to `.then`'s *"second-chance slot"*. It was in the fulfilment slot; the defect was the
+two-argument form, not which argument the write was. That commit is on a shared branch and its
+prose is not worth rewriting history for — §3 keeps the history as it happened — so the correction
+lives here. It belongs in this section on its own merits: this is the file that tracks comments
+asserting what the code does not do, and the commit that fixed one had the same flaw.
 
 The pattern across the four: agents told to find quality problems will find them, and the cost of
 that is not false positives so much as **confidently-argued changes to intended behaviour,
