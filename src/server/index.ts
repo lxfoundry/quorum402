@@ -219,16 +219,29 @@ async function handle(deps: ServerDeps, req: Request, res: Response): Promise<vo
   // perfectly well and could never produce the §8 signature that redeems what it paid for.
   // Letting the payment through would sell a seat nothing can open, and the payer would find
   // out at redemption, having already parted with the money. §11 records the limitation.
-  let payer: string;
+  let account: MirrorAccount;
   try {
-    payer = (await deps.accountOf(transfer.transfer.payerAccountId)).evmAddress;
+    account = await deps.accountOf(transfer.transfer.payerAccountId);
   } catch (error) {
+    // The ledger could not be read - a fact about this server, not about the payer. Still 402,
+    // because §6 puts every pre-settlement refusal there and the payer's money has not moved,
+    // but the upstream text stays in the log: it describes how this coordinator is wired.
+    const because = error instanceof Error ? error.message : String(error);
+    console.error(`payment for ${resourceUrl} could not resolve the payer: ${because}`);
     res.status(402).json({
-      error: "the paying account could not hold a redeemable seat",
-      detail: error instanceof Error ? error.message : String(error),
+      error: "this payment cannot be settled right now",
+      detail: "the paying account could not be read from the ledger",
     });
     return;
   }
+  if (!account.key) {
+    res.status(402).json({
+      error: "the paying account could not hold a redeemable seat",
+      detail: `account ${transfer.transfer.payerAccountId} has no single key that could sign a redemption proof, so a seat bought here could never be opened`,
+    });
+    return;
+  }
+  const payer = account.evmAddress;
 
   const index = deps.index;
   const gate = await preflight(
@@ -239,15 +252,8 @@ async function handle(deps: ServerDeps, req: Request, res: Response): Promise<vo
       coordinatorBalanceTinybars: deps.coordinatorBalanceTinybars,
       // ADR 0006's replay check, and the one precondition only an index can answer: the
       // contract hashes settled transaction ids into a private set and exposes no getter.
-      //
-      // Deliberately the softest gate here. The index lags, so a `false` is never proof that a
-      // payment is new - the contract's own guard remains the authority, and this only catches
-      // a duplicate early enough to save the payer a settlement. An index that cannot answer
-      // must therefore not refuse a payment that is otherwise good, so a failure reads as no
-      // opinion rather than as a refusal.
-      isAlreadyRecorded: index
-        ? (hederaTxId: string) => index.isRecorded(hederaTxId).catch(() => false)
-        : undefined,
+      // What a failure to answer means is `preflight`'s rule, not this wiring's.
+      isAlreadyRecorded: index ? (hederaTxId: string) => index.isRecorded(hederaTxId) : undefined,
     },
     { availability: selling, hederaTxId: transfer.transfer.transactionId },
   );

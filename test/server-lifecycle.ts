@@ -332,11 +332,7 @@ describe("§6 lifecycle", () => {
     // seat this payment would buy could never be opened. Refusing costs the payer a round trip;
     // settling would cost them the money.
     let settled = false;
-    const d = deps({
-      accountOf: async () => {
-        throw new Error("account 0.0.1001 has key type ProtobufEncoded, which cannot sign");
-      },
-    });
+    const d = deps({ accountOf: async () => ({ evmAddress: BUYER_EVM }) });
     d.facilitator.settle = async () => {
       settled = true;
       return { success: true };

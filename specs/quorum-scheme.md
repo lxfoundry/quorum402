@@ -485,17 +485,19 @@ sequenceDiagram
 
     Note over RS,G: no index wired → 501, before anything else.<br/>The transaction id lives only in the log
     RS->>RS: decode the envelope → 401
+    RS->>RS: rule 1 · expired, or valid implausibly far ahead → 401
+    Note over RS,P: rule 1 runs before any read. It is the only check that<br/>touches no network, and an out-of-date receipt is the<br/>cheapest request to send — so it must be the cheapest to refuse
     RS->>P: poolCount, then poolOf for any pool not seen before
     Note over RS,P: no pool of this URL bears the receipt's id → 401, the same<br/>answer as a bad signature: which pools exist is not disclosed here
     RS->>P: poolOf, statusOf — the named pool's terms and live state
     P-->>RS: read once, and carried through every check below
 
     rect rgba(120, 160, 255, 0.12)
-        Note over RS,M: rules 1-3 — proof first, and no deposit touched in here
-        RS->>RS: rule 1 · expired, or valid implausibly far ahead → 401
+        Note over RS,M: rules 2-3 — proof before deposit, and nothing looked up in here
         RS->>M: rule 2 · account's public key and network EVM address
         M-->>RS: key{type, hex}, evmAddress
-        Note over RS,M: no key that can sign — threshold key,<br/>key list, contract account → 401
+        Note over RS,M: no key that can sign — threshold key, key list,<br/>contract account → 401. The account cannot be seated,<br/>and no re-signing would change that
+        Note over RS,M: mirror unreachable → 503, never 401 — the read failed,<br/>the proof did not, and the two are different answers
         RS->>RS: rule 3 · verify over the exact bytes → 401<br/>(says only "does not verify" — never which field)
     end
 
@@ -532,10 +534,18 @@ Nothing is written down on any path. The server holds no record that a seat was 
 restart, a second coordinator, or a third party with the same reads reaches the same answer —
 which is what "entitlement is derived from the hold binding's state" means in practice.
 
-The two reads in the green band are the only places this flow can fail for a reason that is not
-about the receipt, and both are drawn ending at 503 rather than at a 404 or a 500. That is the
-same rule §6 states: a coordinator that cannot make a read owes the payer the difference between
-*"there is no such seat"* and *"I cannot currently tell"*.
+Every read this flow makes — the pool, the ledger, the index, the contract — can fail for a
+reason that is not about the receipt, and all of them are drawn ending at 503 rather than at a
+401, a 404 or a 500. That is the rule §6 states, and it is a rule precisely because the honest
+answer differs from the convenient one at every single site: a coordinator that cannot make a
+read owes the payer the difference between *"your proof does not stand up"*, *"there is no such
+seat"*, and *"I cannot currently tell"*.
+
+Distinguishing them takes some care at the ledger, because two unrelated things arrive there
+together: an account with **no key this scheme can use** — a threshold key, a key list, a
+contract account — is a fact about the account and stays 401, while a mirror node that will not
+answer is a fact about this server and is 503. Reported as one failure they collapse into one
+status, and the 401 is the one that would win.
 
 ## 9. Reversal
 

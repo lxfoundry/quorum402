@@ -35,8 +35,17 @@ export type AccountKeyType = "ECDSA_SECP256K1" | "ED25519";
 export interface MirrorAccount {
   /** The address the network holds - see `evmAddressOf` for why that qualifier matters. */
   evmAddress: string;
-  /** Raw public key hex: 33 bytes compressed for ECDSA, 32 for ED25519. */
-  key: { type: AccountKeyType; hex: string };
+  /**
+   * Raw public key hex: 33 bytes compressed for ECDSA, 32 for ED25519.
+   *
+   * **Absent when the account has no single key this scheme can use** - a threshold key, a key
+   * list, or a contract account with no key at all. That is a fact about the account, reported
+   * as a value, and deliberately not an exception: a throw from here means the ledger could not
+   * be read, which is a fact about *this server*. Collapsing the two forced every caller to
+   * give one answer to both, and they are not the same question - §6 puts a mirror outage at
+   * 503 and an unusable key at 401.
+   */
+  key?: { type: AccountKeyType; hex: string };
 }
 
 /**
@@ -47,19 +56,20 @@ export interface MirrorAccount {
  * Two calls would also be two moments, and an account whose key rotated between them would
  * verify against one and be matched against the other.
  *
- * A threshold key or key list is refused rather than guessed at. `quorum` has nothing to say
+ * A threshold key or key list yields no `key` rather than a guess. `quorum` has nothing to say
  * about m-of-n redemption, and picking one key out of a list would invent a rule §8 does not
- * have; a smart contract account has no key at all and cannot sign this message.
+ * have; a smart contract account has no key at all and cannot sign this message. Each of those
+ * is an account this scheme cannot seat, which the caller decides what to do about - it throws
+ * only when the ledger itself could not be read.
  */
 export async function accountOf(mirrorUrl: string, accountId: string): Promise<MirrorAccount> {
   const body = await accountRecord(mirrorUrl, accountId);
   if (!body.evm_address) throw new Error(`mirror node has no evm address for ${accountId}`);
+  const evmAddress = body.evm_address;
   const type = body.key?._type;
-  if (type !== "ECDSA_SECP256K1" && type !== "ED25519") {
-    throw new Error(`account ${accountId} has key type ${type ?? "none"}, which cannot sign`);
-  }
-  if (!body.key?.key) throw new Error(`mirror node has no public key for ${accountId}`);
-  return { evmAddress: body.evm_address, key: { type, hex: body.key.key } };
+  if (type !== "ECDSA_SECP256K1" && type !== "ED25519") return { evmAddress };
+  if (!body.key?.key) return { evmAddress };
+  return { evmAddress, key: { type, hex: body.key.key } };
 }
 
 /** One account record. The three readers below each want a different field of it. */

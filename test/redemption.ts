@@ -178,12 +178,26 @@ describe("proofs that do not stand up", () => {
     // A threshold-key account reaches here. It cannot sign this message, and that is the
     // payer's problem to see rather than a 500.
     const result = await attempt({
-      accountOf: async () => {
-        throw new Error("account 0.0.1 has key type ProtobufEncoded, which cannot sign");
-      },
+      accountOf: async () => ({ evmAddress: PAYER }),
     });
 
     assert.equal(!result.ok && result.reason, "invalid-proof");
+    assert.equal(!result.ok && statusFor(result), 401);
+  });
+
+  it("does not blame the receipt when the ledger cannot be read", async () => {
+    // The fifth read on this path. "This account cannot sign" and "the mirror node is down"
+    // were one exception once, so both answered 401 - and the second is not a statement about
+    // the receipt at all.
+    const result = await attempt({
+      accountOf: async () => {
+        throw new Error("mirror node returned 503 for account 0.0.1");
+      },
+    });
+
+    assert.equal(!result.ok && result.reason, "index-unavailable");
+    assert.equal(!result.ok && statusFor(result), 503);
+    assert.doesNotMatch(!result.ok ? result.detail : "", /503|mirror node returned/);
   });
 });
 

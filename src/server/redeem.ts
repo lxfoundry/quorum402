@@ -132,8 +132,20 @@ export async function redeem(
   try {
     account = await deps.accountOf(receipt.accountId);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return { ok: false, reason: "invalid-proof", detail };
+    // The fifth read on this path, and it fails the same way the other four do. A mirror node
+    // that cannot be reached says nothing about the receipt, and answering 401 would tell a
+    // payer holding a good seat that their proof does not stand up.
+    return unavailable("the paying account could not be read from the ledger", error);
+  }
+  if (!account.key) {
+    // §8 rule 3 needs one key to verify against. A threshold key, key list or contract account
+    // has none this scheme can use, and no re-signing will produce one - but it is still a
+    // statement about the proof rather than about this server, so it stays 401.
+    return {
+      ok: false,
+      reason: "invalid-proof",
+      detail: `account ${receipt.accountId} has no single key that could have signed this`,
+    };
   }
 
   const message = canonicalRedemptionMessage({
