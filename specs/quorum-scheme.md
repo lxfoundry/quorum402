@@ -221,10 +221,21 @@ fails. `conditional` adds one row: **202 Accepted**.
 | " | Proof valid, but the deposit took no seat (`counted: false`) | 409 + where to reclaim |
 | " | Pool still open | 202 + current fill |
 | " | Pool expired | 409 + where to reclaim |
+| " | Proof valid, but the deposit belongs to another account | 403 |
+| " | No deposit in this pool for that transaction | 404 |
 | " | Proof invalid or expired | 401 |
 
-Redemption is not a payment handshake, so the last four are ordinary HTTP rather than x402 error
+Redemption is not a payment handshake, so the last six are ordinary HTTP rather than x402 error
 mappings.
+
+**403 and 404 are distinguished from 401 deliberately.** All three refuse, and a payer can act on
+only one of them. 401 says the proof did not stand up, so signing again with the right key, pool
+or expiry may work. **403** says the signature was good and the deposit is somebody else's: there
+is no better credential to present, and inviting a retry would be a lie. **404** says this pool
+has no deposit under that transaction id, which is not a statement about the proof at all - and
+whose ordinary cause is an index a second behind the settlement that just funded the seat, so a
+server SHOULD report how far the index has got and a client SHOULD retry rather than conclude its
+payment never happened.
 
 **Delivery depends on the threshold being met, never on the seller having been paid.** Paying the
 seller is a separate, permissionless action; coupling a buyer's access to it would let a failed
@@ -352,6 +363,13 @@ it can be replayed by anyone who observes it** — the window and the transport 
 that, and what it yields is a resource already unlocked for N payers. It is a proof of
 entitlement, not a bearer secret, and this document does not claim otherwise.
 
+Because the window *is* the containment, rule 1's "implausibly far ahead" needs a number in any
+implementation. The reference implementation refuses anything more than **15 minutes** ahead and
+allows 30 seconds of clock skew on expiry, in the payer's favour only — a receipt refused slightly
+late costs one retry, one refused slightly early costs a seat that will not open. A payer has no
+reason to sign a longer-lived receipt than the request it is about to make, and this one asks for
+two minutes.
+
 ## 9. Reversal
 
 If the deadline passes without the threshold being met, every payer is owed their money.
@@ -376,7 +394,7 @@ A hold binding answers one question: how is one payer's money held between commi
 
 | Binding | Status here | Status upstream |
 |---|---|---|
-| `exact` + pool contract | **Hold and settlement built and demonstrated on testnet.** The coordinator implementing §6–§8 is specified here, not yet written | Merged; 17 network bindings |
+| `exact` + pool contract | **Built and demonstrated on testnet**, including the coordinator implementing §6–§8 | Merged; 17 network bindings |
 | `auth-capture` | Not built | Merged; **EVM only** |
 | `escrow` | Not built | **Proposed, open** |
 
