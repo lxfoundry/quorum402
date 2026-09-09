@@ -355,3 +355,41 @@ unauthenticated admin port and explains why at length; `docker-compose.yml`, wri
 day, published it on every interface along with IPFS's RPC and postgres. The same question was
 answered twice, correctly once, and nothing reconciled the two — one file's reasoning does not
 propagate to another just because the same session wrote both.
+
+The redemption branch was reviewed the same way, and this time the review was given the spec
+*as it stood before the branch* alongside the branch's own additions to it, because the branch
+amended §6 and §8 as well as implementing them. A reviewer handed only the current spec would
+have checked the code against prose the code had just written, which is not a check.
+
+Nothing critical again: the ordered checks, the two-hop deposit resolution, the ledger-address
+comparison and the `Met`-or-`Released` rule all held when traced independently, and no way was
+found to obtain a seat without a valid signature or to escalate through a hostile index.
+
+What it found sorts into two kinds, and only one of them is the kind the earlier reviews found.
+
+The familiar kind: §6.2's diagram listed a replay check among the pre-flight's conditions, and
+that check was dead in production — `isRecorded` was written for it, tested through an injected
+stub, and never wired to anything. Prose asserting a property nothing reached, for the third
+review running. Drawing the band accurately then turned up two more of the same: two contract
+reads the diagram showed happening that were in fact one read carried and examined twice.
+
+The unfamiliar kind is worth more. Two defects were not in the diff at all but in what the diff
+now interacted with. `evmAddressOf` had quietly acquired a signing-key requirement when
+`accountOf` was added for §8, because it was rewritten to delegate to it — so a refactor made
+for redemption changed who was allowed to *pay*, and stopped the coordinator booting on a
+multi-key account, in a function neither path's author was looking at. And the subgraph became
+a request-path dependency in this branch without any of its failure modes being handled: an
+index outage answered 500 to buyers holding good seats, with the upstream error echoed back.
+
+Both are the same shape, and it is not the spec-versus-code gap: it is a change whose blast
+radius was larger than the thing being changed. Reviewing the diff catches the first kind
+because the claim and the code are both in the diff. Catching the second needs someone to ask
+what *else* now depends on the lines that moved — which is why the review was asked to read
+full files rather than the diff alone.
+
+The demo path had a third variant. `npm run redeem` resolved the pool as `poolsFor(url)[0]`,
+the earliest pool ever opened for the resource, which is wrong as soon as a slug is demoed
+twice — and it already was, live. It had also never set an operator on its Hedera client, so
+the command failed before reaching its own logic. The second bug hid the first: a script that
+cannot run cannot be observed picking the wrong pool. Both were found by running it against
+testnet rather than by reading it, which is the only way either would have surfaced.
