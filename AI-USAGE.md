@@ -217,6 +217,28 @@ anyone had thought to ask — so both surfaced as a live deployment failing, and
 error named a symptom rather than the cause. Reading cures the first shape. The second is only
 cured by treating a deployment as somewhere choices get made rather than defaults accepted.
 
+**2026-09-09 — wrote an address down, never asked the network for it, and left it beside the
+keys.** `create-accounts.ts` recorded each buyer's `evmAddress` as `key.publicKey.toEvmAddress()`
+— correct arithmetic on the key, and not the address the account has. The same script creates
+those accounts with `setKeyWithoutAlias`, so they carry no EVM alias and the network gives them
+the long-zero form of their number instead. Both facts were written by this tool, two dozen lines
+apart, and neither was checked against the other.
+
+Nothing read the field, so nothing failed. The cost was paid elsewhere: it is the value sitting
+next to the private keys, so it is what a human compares a subgraph against, and the subgraph —
+which had the right address, from the mirror node, all along — was the thing suspected. Two days
+later it took a mirror-node query and a key derivation to establish that the file was wrong and
+the index was not.
+
+The same session found `specs/pool-contract.md` explaining long-zero addresses as a consequence
+of ED25519 keys. That is a plausible sentence and a false one — the condition is the missing
+alias, and every buyer here is ECDSA — and it was written to the spec, believed, and never
+contradicted by the code, because the code was reading the mirror node and not the spec.
+
+Both are the shape this file already records for external specifications, turned inward: a fact
+stated fluently from what the API *looks* like it means, and then not checked. An unused field
+is the worst place for one, because nothing will ever disagree with it.
+
 ## 6. Review, and what it caught
 
 The contract was reviewed by a second Claude Code session given only the diff, the spec and
