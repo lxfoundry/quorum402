@@ -504,3 +504,33 @@ Worth recording separately: `src/graph/client.ts` had no tests. Every test in th
 thing a subgraph is free to vary, and where both of these defects lived — had only ever been
 exercised against testnet, on the path where nothing goes wrong. It has eight now, seven of them
 about partial success.
+
+The refund branch was reviewed before it merged, given the diff, the specs and the ADRs. Nothing
+in the code was wrong. Three of the four findings were assertions that could not fail.
+
+The run's headline claim is that the crowd fell one seat short, and the only thing it read to
+support that was `statusOf` — which answers `Open` for a pool nobody was seated in exactly as
+readily as for one holding two of three seats. The lazy-expiry assertion had the same shape from
+the other end: `statusOf` resolves the deadline live, so it reads `Expired` whether or not
+anything stamped the pool, and the assertion therefore held just as well against the eager keeper
+ADR 0004 exists to argue against. And `refundAll`'s docstring told a caller to advance its window
+against `depositCount`, which was on the contract and not on this client — an instruction
+unfollowable from the language it was written for.
+
+That last one is this branch's own bug, one level up. The branch exists because `claimRefund` and
+`refundAll` were fully tested and had no caller; it then shipped a documented path with nothing
+able to walk it. The lesson did not generalise one step beyond the case that taught it.
+
+Four reviews running, the same category: prose asserting a property nothing reached. What is new
+is where it landed. The earlier ones found it in specs describing contracts, where the prose and
+the thing it describes are visibly different artifacts. This one found it in a test's own success
+messages, which is the hardest place to see it, because a passing run reads as evidence — and a
+passing run of an assertion that cannot fail reads identically.
+
+The fourth finding was not that shape, and was the one with money behind it. The deadline wait
+slept until the local clock passed the deadline and then one second more: the only assumption in
+a harness that otherwise polls three networks for everything. A clock ahead of consensus by more
+than that second does not produce a flaky assertion — the `claimRefund` after it reverts, the
+revert throws, and the scenario unwinds before `refundAll` runs, leaving both deposits in the
+contract with nothing left in the run to push them back out. The cost of the assumption was not
+the assertion it broke but the four steps behind it that never got to run.
