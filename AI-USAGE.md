@@ -306,6 +306,30 @@ known and not applied; here the check was run and its result was not read. Both 
 that is confidently the opposite of the truth, and in both cases the tool that would have caught
 it was already in hand and used partially.
 
+**2026-09-09 — read a contract-wide figure as if it were one pool's, twice.** The end-to-end
+run asserted that `committedTinybars()` returns to zero after a release. That assertion was
+copied from `check-payout.ts`, where it is correct — but only because that script ran when the
+contract had one pool in its whole life. Against a contract carrying eleven, earlier pools
+still hold deposits and the figure is never zero. The fix was a delta, which was wrong the
+same way one layer down: `_totalCommitted` rises as each deposit is recorded and falls when
+the payout leaves, so a delta measured across the whole scenario nets to zero and asserts
+nothing at all. It passed only once it bracketed the release alone.
+
+Both errors are the same one. An assertion was carried over from a script whose assumptions
+were not carried over with it, and the second attempt inherited the first's mental model
+instead of going back to the contract. The contract was read only after the second failure,
+and it answered the question in four lines.
+
+**2026-09-09 — reported a test as run when the tool had not run it.** Verifying that a run
+killed halfway leaves nothing behind for the next one, the check was `timeout -s KILL 7`
+around the runner. It exited 0 with a complete, successful run three times, and each was read
+as "the kill left no orphan" rather than as what it was: `timeout` not killing anything in
+this shell. Timing a plain run showed it takes 40 seconds, so a 7-second limit could not have
+let it finish. The orphan-resilience claim was never tested; it holds by construction — each
+run sells on an ephemeral port, so its resource URL is one no earlier pool can name — and that
+is an argument, not a measurement. Recorded because the failure is self-flattering: a
+verification step that cannot fail reads exactly like one that passed.
+
 ## 6. Review, and what it caught
 
 The contract was reviewed by a second Claude Code session given only the diff, the spec and
