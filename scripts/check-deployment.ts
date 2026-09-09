@@ -11,6 +11,7 @@
  *      npm run check:deployment -- --contract 0.0.x
  */
 import { caip2, loadConfig } from "../src/config.js";
+import { hashscanContract } from "../src/hedera/explorer.js";
 import {
   adminKeyKind,
   codeHashOf,
@@ -80,7 +81,7 @@ async function main(): Promise<number> {
     failures++;
   }
 
-  info(`https://hashscan.io/${cfg.network}/contract/${contractId}`);
+  info(hashscanContract(cfg.network, contractId));
   return failures;
 }
 

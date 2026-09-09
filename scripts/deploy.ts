@@ -17,6 +17,7 @@
  */
 import { Client, ContractCreateFlow, Hbar, AccountId, PrivateKey } from "@hiero-ledger/sdk";
 import { caip2, loadConfig } from "../src/config.js";
+import { hashscanContract } from "../src/hedera/explorer.js";
 import {
   CONTRACT_NAME,
   adminKeyKind,
@@ -171,7 +172,7 @@ async function main(): Promise<number> {
     }
     info(`contractId  ${deployment.contractId}   <- PaymentRequirements.payTo`);
     info(`evmAddress  ${deployment.evmAddress}`);
-    info(`https://hashscan.io/${cfg.network}/contract/${deployment.contractId}`);
+    info(hashscanContract(cfg.network, deployment.contractId));
   } finally {
     client.close();
   }

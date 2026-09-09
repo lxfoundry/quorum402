@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>quorum402</title>
+    <style>
+      /*
+       * Built to be filmed. The delivery floor for the submission video is 720p, so nothing here
+       * is smaller than 14px, the palette is saturated rather than tinted, and the whole thing is
+       * one 100vh grid - a demo that has to be scrolled cannot be shown in ninety seconds, and
+       * speeding the video up is a disqualification.
+       */
+      :root {
+        --ink: #16181d;
+        --muted: #5c6370;
+        --line: #d8dbe2;
+        --panel: #ffffff;
+        --ground: #f4f5f7;
+        --open: #1857c4;
+        --met: #12784a;
+        --expired: #a2610a;
+        --released: #5c6370;
+        --accent: #1857c4;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        font: 16px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+        color: var(--ink);
+        background: var(--ground);
+      }
+
+      /* ---------------------------------------------------------------- header */
+
+      header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 14px 22px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+      }
+      .brand { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+      .pitch { color: var(--muted); max-width: 62ch; margin-top: 2px; }
+      .wallet-pick { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+      .wallet-pick select { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+      .balance { font-variant-numeric: tabular-nums; font-weight: 600; }
+      .account { color: var(--muted); font-size: 14px; }
+
+      /* ---------------------------------------------------------------- columns */
+
+      main {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        padding: 16px 22px;
+        overflow: hidden;
+      }
+      section { display: flex; flex-direction: column; min-height: 0; }
+      h2 {
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin: 0 0 10px;
+      }
+      .scroll { overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 4px; }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 14px 16px;
+      }
+      .card h3 { margin: 0 0 2px; font-size: 17px; }
+      .cut { color: var(--muted); font-size: 14px; }
+      .why { color: var(--muted); font-size: 14px; margin: 8px 0 10px; }
+
+      /* ---------------------------------------------------------------- seats */
+
+      .bar { height: 12px; background: #e7e9ee; border-radius: 6px; overflow: hidden; margin: 10px 0 6px; }
+      .bar span { display: block; height: 100%; background: var(--accent); transition: width 0.3s; }
+      .facts { display: flex; gap: 14px; flex-wrap: wrap; align-items: baseline; font-size: 14px; }
+      .facts b { font-variant-numeric: tabular-nums; font-size: 16px; }
+
+      .pill {
+        display: inline-block;
+        padding: 2px 9px;
+        border-radius: 999px;
+        font-size: 13px;
+        font-weight: 700;
+        color: #fff;
+        letter-spacing: 0.02em;
+      }
+      .pill.Open { background: var(--open); }
+      .pill.Met { background: var(--met); }
+      .pill.Expired { background: var(--expired); }
+      .pill.Released { background: var(--released); }
+
+      /* ---------------------------------------------------------------- controls */
+
+      button {
+        font: inherit;
+        font-weight: 600;
+        padding: 9px 16px;
+        margin-top: 12px;
+        border: 0;
+        border-radius: 6px;
+        background: var(--accent);
+        color: #fff;
+        cursor: pointer;
+      }
+      button:disabled { background: #c3c7d0; cursor: not-allowed; }
+      button.ghost { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+      label { display: block; font-size: 14px; color: var(--muted); margin: 10px 0 3px; }
+      select { font: inherit; width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+
+      a { color: var(--accent); }
+      .mono { font-family: Consolas, "SF Mono", monospace; font-size: 14px; }
+      .note { font-size: 14px; color: var(--muted); margin-top: 8px; }
+      .empty { color: var(--muted); font-size: 14px; }
+      .badge { font-size: 14px; font-weight: 600; color: var(--met); }
+      .badge.waiting { color: var(--expired); }
+
+      /* ---------------------------------------------------------------- licence */
+
+      .quantiles { display: flex; gap: 18px; margin: 10px 0 4px; }
+      .quantiles div { flex: 1; }
+      .quantiles b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+      .quantiles span { font-size: 13px; color: var(--muted); }
+
+      /* ---------------------------------------------------------------- footer */
+
+      footer { border-top: 1px solid var(--line); background: var(--panel); }
+      .crowd {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        padding: 9px 22px;
+        border-bottom: 1px solid var(--line);
+        font-size: 14px;
+      }
+      .crowd b { text-transform: uppercase; letter-spacing: 0.08em; font-size: 13px; color: var(--muted); }
+      .who { display: flex; align-items: center; gap: 6px; }
+      .dot { width: 10px; height: 10px; border-radius: 50%; background: #c3c7d0; }
+      .dot.seated { background: var(--met); }
+
+      .log {
+        height: 104px;
+        overflow-y: auto;
+        padding: 8px 22px;
+        font-family: Consolas, "SF Mono", monospace;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      .log div { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+      .log .t { color: var(--muted); }
+      .log .out { color: var(--muted); }
+      .log .in { color: var(--ink); font-weight: 600; }
+      .log .chain { color: var(--met); }
+      .log .s2xx { color: var(--met); }
+      .log .s402, .log .s4xx { color: var(--expired); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <div class="brand">quorum402</div>
+        <div class="pitch">
+          One HTTP 402, answered by a crowd. Payment is held and the data unlocks only if enough
+          separate buyers pay before the deadline — otherwise everyone is refunded.
+        </div>
+      </div>
+      <div class="wallet-pick">
+        <label for="wallet" style="margin: 0">wallet</label>
+        <select id="wallet"></select>
+        <div>
+          <div class="balance" id="balance">—</div>
+          <div class="account mono" id="account"></div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section>
+        <h2 id="left-title">Services</h2>
+        <div class="scroll" id="services"></div>
+      </section>
+      <section>
+        <h2 id="right-title">My seats</h2>
+        <div class="scroll" id="right"></div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="crowd"><b>The crowd</b><div id="crowd" class="who"></div></div>
+      <div class="log" id="log"></div>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>

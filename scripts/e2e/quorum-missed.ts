@@ -22,6 +22,7 @@ import { resourceUrlFor } from "../../src/benchmark/catalogue.js";
 import { caip2 } from "../../src/config.js";
 import type { Config } from "../../src/config.js";
 import { GraphClient } from "../../src/graph/client.js";
+import { hashscanContract } from "../../src/hedera/explorer.js";
 import { accountOf, awaitBalance, balanceTinybars, evmAddressOf } from "../../src/hedera/mirror.js";
 import { PoolsClient } from "../../src/pool/client.js";
 import type { PoolState } from "../../src/pool/client.js";
@@ -358,7 +359,7 @@ export async function quorumMissed(report: Reporter, params: ScenarioParams): Pr
         `the contract holds ${hbar(emptied - contractBefore)} more than it started with`,
       );
 
-      report.info(`https://hashscan.io/${cfg.network}/contract/${contractId}`);
+      report.info(hashscanContract(cfg.network, contractId));
     } finally {
       await coordinator.close();
     }
