@@ -34,8 +34,9 @@ import {
 } from "../../src/hedera/explorer.js";
 import { balanceTinybars } from "../../src/hedera/mirror.js";
 import { PoolsClient } from "../../src/pool/client.js";
-import type { PoolState, PoolTerms } from "../../src/pool/client.js";
+import { poolSummary } from "../../src/server/index.js";
 import type { Coordinator } from "../../src/server/index.js";
+import type { PoolAvailability } from "../../src/server/pools.js";
 import type { Receipt } from "../../src/server/receipt.js";
 import { hbarToTinybars, tinybarsToHbar } from "../../src/x402/hedera-exact.js";
 import { ProtocolLog } from "./log.js";
@@ -187,26 +188,28 @@ async function servicesFor(ctx: DemoContext, cache: PoolStatusCache, now: number
         unitPrice: benchmark.unitPrice,
         resourceUrl,
         thresholds: [benchmark.minimumContributors, benchmark.minimumContributors + 1],
-        pool: selling ? poolCard(selling.terms, selling.state, selling.reason, now) : undefined,
+        pool: selling ? poolCard(selling, now) : undefined,
       };
     }),
   );
 }
 
-/** A pool as a buyer is shown it - the six facts a 402 carries, plus the clock. */
-function poolCard(terms: PoolTerms, live: PoolState, reason: string | undefined, now: number) {
+/**
+ * A pool as a buyer is shown it - the six facts a 402 carries, plus the clock.
+ *
+ * Literally the six a 402 carries: `poolSummary` is the coordinator's own `extra`, reused rather
+ * than rewritten, so what the page shows and what the challenge says cannot drift into two
+ * accounts of one pool. Everything added here is presentation the wire has no use for.
+ */
+function poolCard(availability: PoolAvailability, now: number) {
+  const { terms } = availability;
   return {
-    poolId: terms.poolId.toString(),
-    state: live,
+    ...poolSummary(terms, availability.state),
     storedState: terms.state,
-    filled: terms.seats,
-    threshold: terms.threshold,
-    deadline: terms.deadline,
     secondsLeft: Math.max(0, terms.deadline - now),
-    unitTinybars: terms.unitTinybars.toString(),
     seatHbar: tinybarsToHbar(terms.unitTinybars),
-    available: reason === undefined,
-    reason,
+    available: availability.available,
+    reason: availability.available ? undefined : availability.reason,
   };
 }
 
@@ -487,23 +490,22 @@ async function release(ctx: DemoContext, body: { poolId: string }) {
  * `Released` pool cannot change again, and neither can an `Expired` one.
  */
 class PoolStatusCache {
-  private readonly advertisedByUrl = new Map<string, { at: number; value: Advertised | undefined }>();
+  private readonly advertisedByUrl = new Map<
+    string,
+    { at: number; value: PoolAvailability | undefined }
+  >();
   private readonly liveById = new Map<string, { at: number; terminal: boolean; value: LivePool }>();
 
   constructor(private readonly ctx: DemoContext) {}
 
-  async advertised(resourceUrl: string): Promise<Advertised | undefined> {
+  async advertised(resourceUrl: string): Promise<PoolAvailability | undefined> {
     const hit = this.advertisedByUrl.get(resourceUrl);
     if (hit && Date.now() - hit.at < POOL_CACHE_MS) return hit.value;
 
-    const availability = await this.ctx.coordinator.deps.registry.sellingPoolFor(resourceUrl);
-    const value: Advertised | undefined = availability
-      ? {
-          terms: availability.terms,
-          state: availability.state,
-          reason: availability.available ? undefined : availability.reason,
-        }
-      : undefined;
+    // Kept as the registry returned it. Flattening `available` into "the reason is undefined"
+    // would mean decoding it again at the render site, and a boolean round-tripped through a
+    // string is one more thing that can be got backwards.
+    const value = await this.ctx.coordinator.deps.registry.sellingPoolFor(resourceUrl);
     this.advertisedByUrl.set(resourceUrl, { at: Date.now(), value });
     return value;
   }
@@ -547,12 +549,6 @@ class PoolStatusCache {
       return hit?.value;
     }
   }
-}
-
-interface Advertised {
-  terms: PoolTerms;
-  state: PoolState;
-  reason?: string;
 }
 
 /** Mirror-node balances. Free, but shared infrastructure, so not once per second. */
