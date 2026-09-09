@@ -57,9 +57,10 @@ function registryOver(pools: PoolTerms[], states?: PoolState[], guardSeconds = 3
 describe("pool registry", () => {
   it("reads forward once when two requests arrive together", async () => {
     // The normal case, not a corner: a page showing every benchmark asks about each of them at
-    // once, so two lookups routinely enter the scan before either has finished. `scanned` only
-    // moves at the end, so without a guard both read forward from the same point and file every
-    // pool id twice - and each duplicate is a contract read, on every later lookup, forever.
+    // once, so two lookups routinely enter the scan before either has finished. `scanned` cannot
+    // move until a `poolOf` has resolved, so without a guard both read forward from the same
+    // point and file every pool id twice - and each duplicate is a contract read, on every
+    // later lookup, forever.
     const { registry, reads } = registryOver([terms(0n), terms(1n)]);
 
     const [first, second] = await Promise.all([
@@ -84,6 +85,34 @@ describe("pool registry", () => {
 
     assert.deepEqual(await registry.poolsFor("https://quorum402.example/nothing"), []);
     assert.equal(await registry.sellingPoolFor("https://quorum402.example/nothing"), undefined);
+  });
+
+  it("keeps the pools it read when a scan fails partway through", async () => {
+    // `poolOf` is a network read and can throw halfway, which is the other way one scan can
+    // file what an earlier one already filed. The cursor moves with each pool rather than at
+    // the end, so a scan that dies at pool 1 does not hand pool 0 back to the next one.
+    const all = [terms(0n), terms(1n), terms(2n)];
+    const reads: bigint[] = [];
+    let thrown = false;
+    const stub: PoolReader = {
+      poolCount: async () => BigInt(all.length),
+      poolOf: async (poolId) => {
+        reads.push(poolId);
+        if (poolId === 1n && !thrown) {
+          thrown = true;
+          throw new Error("mirror node unreachable");
+        }
+        return all[Number(poolId)]!;
+      },
+      statusOf: async (poolId) => all[Number(poolId)]!.state,
+    };
+    const registry = new PoolRegistry(stub, { now: () => NOW, guardSeconds: 30 });
+
+    await assert.rejects(registry.poolsFor(RESOURCE), /mirror node unreachable/);
+    assert.deepEqual(reads, [0n, 1n], "it stopped where it failed");
+
+    assert.deepEqual(await registry.poolsFor(RESOURCE), [0n, 1n, 2n]);
+    assert.deepEqual(reads, [0n, 1n, 1n, 2n], "pool 0 is not read again - nor filed twice");
   });
 
   it("reads only the pools it has not seen before", async () => {

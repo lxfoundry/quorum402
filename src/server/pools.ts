@@ -135,11 +135,12 @@ export class PoolRegistry {
    * Costs one `poolCount` call per request and one `poolOf` per pool that has appeared since
    * the last one - which is zero on almost every request.
    *
-   * One at a time because `scanned` only moves at the end: two requests arriving together -
-   * which is the normal case, since a page showing every benchmark asks about each of them at
-   * once - would otherwise both read forward from the same point and push every new pool id
-   * into `byUrl` twice. Nothing would resolve to the wrong pool, but every later lookup would
-   * walk the duplicates and pay for a contract read per copy, for the life of the process.
+   * One at a time because `scanned` cannot move until a `poolOf` has resolved: two requests
+   * arriving together - which is the normal case, since a page showing every benchmark asks
+   * about each of them at once - would otherwise both read forward from the same point and
+   * push every new pool id into `byUrl` twice. Nothing would resolve to the wrong pool, but
+   * every later lookup would walk the duplicates and pay for a contract read per copy, for
+   * the life of the process.
    */
   private async scan(): Promise<void> {
     this.scanning ??= this.readForward().finally(() => {
@@ -155,7 +156,11 @@ export class PoolRegistry {
       const existing = this.byUrl.get(terms.resourceUrl);
       if (existing) existing.push(poolId);
       else this.byUrl.set(terms.resourceUrl, [poolId]);
+      // Per pool, not once at the end. `poolOf` is a network read and can throw halfway, and
+      // moving the cursor only afterwards would leave the ids already filed to be filed again
+      // by the next scan - the same permanent duplicate cost, reached through a failed read
+      // rather than a concurrent one.
+      this.scanned = poolId + 1n;
     }
-    this.scanned = count;
   }
 }
