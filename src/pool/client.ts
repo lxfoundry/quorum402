@@ -63,6 +63,25 @@ interface RawPool {
   resourceUrl: string;
 }
 
+/**
+ * One recorded payment, as the contract holds it.
+ *
+ * Note what is *not* here: the Hedera transaction id it settled under. The contract hashes that
+ * into its double-spend guard and keeps only the hash, so the id survives in the events alone -
+ * which is why §8 needs an index to reach a deposit and cannot simply ask for one.
+ */
+export interface Deposit {
+  /** The EVM address the payment was attributed to. What `claimRefund` matches on. */
+  payer: string;
+  tinybars: bigint;
+  /** Whether it took a seat. False means it settled late: refundable at once, entitling nothing. */
+  counted: boolean;
+  refunded: boolean;
+}
+
+/** The shape `depositAt` returns once decoded. Same fields; `payer` is already a hex string. */
+type RawDeposit = Deposit;
+
 let abiCache: Abi | undefined;
 
 /**
@@ -222,6 +241,41 @@ export class PoolsClient {
       deadline: Number(raw.deadline),
       state,
       resourceUrl: raw.resourceUrl,
+    };
+  }
+
+  /** How many deposits a pool has recorded, counted and late alike. */
+  async depositCount(poolId: bigint): Promise<bigint> {
+    const args = new ContractFunctionParameters().addUint256(long(poolId));
+    return BigInt((await this.queryUint256("depositCount", args)).toFixed());
+  }
+
+  /**
+   * One deposit, by the index the log gave for it.
+   *
+   * §8 splits the lookup deliberately: the transaction id lives only in the events, so an index
+   * resolves id to position - but `payer` and `counted`, the two facts entitlement turns on, are
+   * read back from here. An indexer that lagged, or lied, can then at worst point at the wrong
+   * row, and the row itself still comes from consensus state.
+   *
+   * Reverts `NoSuchDeposit` above `depositCount`, so callers bound the index first.
+   */
+  async depositAt(poolId: bigint, depositId: bigint): Promise<Deposit> {
+    const args = new ContractFunctionParameters()
+      .addUint256(long(poolId))
+      .addUint256(long(depositId));
+    const data = await this.queryBytes("depositAt", args);
+    const raw = decodeFunctionResult({
+      abi: abi(),
+      functionName: "depositAt",
+      data,
+    }) as unknown as RawDeposit;
+
+    return {
+      payer: raw.payer,
+      tinybars: raw.tinybars,
+      counted: raw.counted,
+      refunded: raw.refunded,
     };
   }
 

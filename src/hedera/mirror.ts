@@ -19,11 +19,45 @@
  * be redeemed by the account that bought it.
  */
 export async function evmAddressOf(mirrorUrl: string, accountId: string): Promise<string> {
+  return (await accountOf(mirrorUrl, accountId)).evmAddress;
+}
+
+/** How an account's key is held. The two Hedera supports sign and verify identically here. */
+export type AccountKeyType = "ECDSA_SECP256K1" | "ED25519";
+
+export interface MirrorAccount {
+  /** The address the network holds - see `evmAddressOf` for why that qualifier matters. */
+  evmAddress: string;
+  /** Raw public key hex: 33 bytes compressed for ECDSA, 32 for ED25519. */
+  key: { type: AccountKeyType; hex: string };
+}
+
+/**
+ * The public key and network address of an account, in one request.
+ *
+ * §8 asks a redeeming server for both - the key to verify the signature, the address to match
+ * against the deposit's recorded payer - and the mirror node returns them from the same record.
+ * Two calls would also be two moments, and an account whose key rotated between them would
+ * verify against one and be matched against the other.
+ *
+ * A threshold key or key list is refused rather than guessed at. `quorum` has nothing to say
+ * about m-of-n redemption, and picking one key out of a list would invent a rule §8 does not
+ * have; a smart contract account has no key at all and cannot sign this message.
+ */
+export async function accountOf(mirrorUrl: string, accountId: string): Promise<MirrorAccount> {
   const res = await fetch(`${mirrorUrl}/api/v1/accounts/${accountId}?limit=1`);
   if (!res.ok) throw new Error(`mirror node returned ${res.status} for account ${accountId}`);
-  const body = (await res.json()) as { evm_address?: string };
+  const body = (await res.json()) as {
+    evm_address?: string;
+    key?: { _type?: string; key?: string } | null;
+  };
   if (!body.evm_address) throw new Error(`mirror node has no evm address for ${accountId}`);
-  return body.evm_address;
+  const type = body.key?._type;
+  if (type !== "ECDSA_SECP256K1" && type !== "ED25519") {
+    throw new Error(`account ${accountId} has key type ${type ?? "none"}, which cannot sign`);
+  }
+  if (!body.key?.key) throw new Error(`mirror node has no public key for ${accountId}`);
+  return { evmAddress: body.evm_address, key: { type, hex: body.key.key } };
 }
 
 export async function balanceTinybars(mirrorUrl: string, id: string): Promise<bigint> {
