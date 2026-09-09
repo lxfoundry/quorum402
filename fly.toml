@@ -1,0 +1,68 @@
+# The coordinator - the x402 resource server, answering on the public internet.
+#
+#   fly deploy
+#
+# It sits at the repo root rather than in a `fly/` directory beside the subgraph's three,
+# because those are stock images configured from the outside and this one is built from the
+# source next to it. The Dockerfile has to be here; the config that names it may as well be.
+#
+# The operator key is not in this file and must never be - this repository is public. It is a
+# Fly secret:
+#
+#   fly secrets set HEDERA_OPERATOR_KEY=... -a quorum402-coordinator
+app = "quorum402-coordinator"
+
+# Same region as the subgraph. The index is not beside the request path here, it is in it -
+# a redemption cannot be answered without it (`quorum-scheme.md` §8) - so the two apps being
+# in one datacenter is worth the line it costs to say so.
+primary_region = "ams"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Everything here is public information, and all of it is already in .env.example. What is
+# missing from this list is the point of the list: HEDERA_OPERATOR_KEY.
+[env]
+  PORT = "4021"
+  HEDERA_NETWORK = "testnet"
+  HEDERA_MIRROR_URL = "https://testnet.mirrornode.hedera.com"
+  HEDERA_OPERATOR_ID = "0.0.10404217"
+  X402_FACILITATOR_URL = "https://api.testnet.blocky402.com"
+  SUBGRAPH_URL = "https://quorum402-subgraph.fly.dev/subgraphs/name/quorum402"
+
+  # Load-bearing, and the one value here that cannot be guessed from the others.
+  #
+  # A pool stores its resource URL on-chain when it is opened, and the coordinator finds the
+  # pool for a request by matching that string exactly. So a pool opened against
+  # http://localhost:4021 is not for sale here, whatever this machine is running: the request
+  # arrives, the lookup misses, and the answer is a 404 while the pool sits open and payable
+  # somewhere no buyer can reach it. Pools this server sells have to be opened with
+  # PUBLIC_BASE_URL set to this value - see the README.
+  PUBLIC_BASE_URL = "https://quorum402-coordinator.fly.dev"
+
+[http_service]
+  internal_port = 4021
+  force_https = true
+  auto_start_machines = true
+
+  # Kept awake deliberately. There is no state to lose - the coordinator holds no database,
+  # and a restart costs it a cache - so stopping would be free in every sense except the one
+  # that matters: a cold start lands in the middle of somebody's payment, and an x402 flow
+  # that takes fifteen seconds to answer its first 402 looks broken rather than asleep.
+  auto_stop_machines = false
+  min_machines_running = 1
+
+  # `/healthz` answers from configuration alone and touches no network. That is the right
+  # check for this: an unreachable mirror node or a facilitator having a bad afternoon is not
+  # a reason to replace the machine, and a health check that fails on someone else's outage
+  # takes the service down twice.
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "15s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
