@@ -24,6 +24,7 @@ import type { Config } from "../../src/config.js";
 import { GraphClient } from "../../src/graph/client.js";
 import { accountOf, awaitBalance, balanceTinybars, evmAddressOf } from "../../src/hedera/mirror.js";
 import { PoolsClient } from "../../src/pool/client.js";
+import type { PoolState } from "../../src/pool/client.js";
 import { FailureReporter } from "../../src/server/failures.js";
 import { PoolRegistry } from "../../src/server/pools.js";
 import { CLAIM_REFUND } from "../../src/server/receipt.js";
@@ -45,6 +46,17 @@ import type { Reporter, ScenarioParams } from "./harness.js";
  * is a second spent watching a clock.
  */
 export const MISSED_TTL_SECONDS = 120;
+
+/**
+ * How long to keep asking the contract whether its deadline has passed, once this machine's
+ * clock says it has.
+ *
+ * Twenty seconds, in two-second looks. In practice a consensus timestamp and a local clock are
+ * fractions of a second apart and the first look answers - the bound exists because the only
+ * alternative to asking is assuming, and assuming is what this used to do.
+ */
+const CONSENSUS_ATTEMPTS = 10;
+const CONSENSUS_INTERVAL_MS = 2_000;
 
 /** What a payer held before it paid, so "made whole" can be checked rather than asserted. */
 interface Before {
@@ -206,11 +218,12 @@ export async function quorumMissed(report: Reporter, params: ScenarioParams): Pr
       }
 
       report.step("the deadline passes");
-      await awaitDeadline(report, deadline);
+      const state = await awaitDeadline(report, pools, poolId, deadline);
 
       // ADR 0004's lazy expiry, in the only window where it is visible. `statusOf` resolves the
       // deadline live and `poolOf` hands back what is stored, so the two disagree exactly while
-      // a pool is past its deadline and unstamped - which is what both are read for here.
+      // a pool is past its deadline and unstamped - which is why the wait above returns the one
+      // it polled and this reads the other.
       //
       // `statusOf` alone would have said nothing about the clock. An implementation with a
       // keeper eagerly stamping every pool it passes answers `Expired` here too, identically,
@@ -219,7 +232,6 @@ export async function quorumMissed(report: Reporter, params: ScenarioParams): Pr
       //
       // The index cannot see this yet, and `schema.graphql` says so rather than pretending
       // otherwise - nothing was emitted, because nothing happened.
-      const state = await pools.statusOf(poolId);
       const stored = (await pools.poolOf(poolId)).state;
       report.expect(
         state === "Expired",
@@ -381,13 +393,29 @@ async function claimRefundAs(
 }
 
 /**
- * Sit out the pool's deadline, saying how much of it is left.
+ * Sit out the pool's deadline, then wait for the network to agree it has passed.
  *
- * The only wait in this project that is not polling for something - a clock needs nothing asked
- * of it - but it reports like the others for the reason `harness.ts` gives: a run that goes
- * quiet for two minutes is indistinguishable from a run that has hung.
+ * The countdown half is the one wait in this project that is not polling for anything - a clock
+ * needs nothing asked of it - and it reports like the others for the reason `harness.ts` gives:
+ * a run that goes quiet for two minutes is indistinguishable from a run that has hung.
+ *
+ * The half after it is not a clock, and used to be. `_effectiveState` compares against the
+ * consensus timestamp rather than this process's `Date.now()`, and sleeping a second past the
+ * deadline assumed the gap between them was smaller than that. Being early is not a flaky
+ * assertion here, it is a stranded pool: `statusOf` still answers `Open`, the redemption gets
+ * its 202 instead of a 409, and `claimRefund` then reverts `NothingToRefund` - which throws,
+ * unwinds the scenario, and leaves `refundAll` uncalled with both deposits still in the
+ * contract. Everything else in this harness asks rather than assumes; now so does this.
+ *
+ * Returns the state it last read, so the caller asserts on what was actually observed rather
+ * than on a second read that may have moved on from it.
  */
-async function awaitDeadline(report: Reporter, deadline: number): Promise<void> {
+async function awaitDeadline(
+  report: Reporter,
+  pools: PoolsClient,
+  poolId: bigint,
+  deadline: number,
+): Promise<PoolState> {
   const remaining = () => deadline - Math.floor(Date.now() / 1000);
   let announced = 0;
   while (remaining() > 0) {
@@ -399,7 +427,15 @@ async function awaitDeadline(report: Reporter, deadline: number): Promise<void> 
     }
     await new Promise((r) => setTimeout(r, 1_000));
   }
-  // A second past it, so the coordinator's clock and the network's agree it is behind them.
-  await new Promise((r) => setTimeout(r, 1_000));
-  report.ok("the deadline passed with the pool one seat short");
+
+  let state = await pools.statusOf(poolId);
+  for (let attempt = 1; attempt < CONSENSUS_ATTEMPTS && state === "Open"; attempt++) {
+    report.info(`the network has not passed the deadline yet - look ${attempt}`);
+    await new Promise((r) => setTimeout(r, CONSENSUS_INTERVAL_MS));
+    state = await pools.statusOf(poolId);
+  }
+  // Silent when it never expired: the assertion this returns to reports that, and one cause
+  // deserves one failure line.
+  if (state === "Expired") report.ok("the deadline passed with the pool one seat short");
+  return state;
 }
