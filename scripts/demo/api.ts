@@ -150,11 +150,15 @@ async function stateFor(
   // instead - so asking the index for one would be a subgraph round trip per poll, all the way
   // through the half of the demo where nobody has bought anything yet.
   const mine = wallet && wallet.role !== "seller" ? wallet : undefined;
-  const [services, held, seats] = await Promise.all([
-    servicesFor(ctx, pools, now),
-    balances.all(),
-    mine ? seatsFor(ctx, pools, mine.evmAddress, mine.label, now) : Promise.resolve([]),
-  ]);
+  // `servicesFor` resolves the advertised pool and files it under its pool id, and that is
+  // almost always a pool the seat list is about to ask about as well. Started together the two
+  // race: `seatsFor` opens with a subgraph round trip, which normally beats the two sequential
+  // contract reads behind `servicesFor`, so both reach the chain before either has filed an
+  // answer and the pool on screen is read twice. Letting the advertised read land first is
+  // what makes it one read per pool per poll. `balances.all()` hits the mirror node instead,
+  // shares nothing with either, and still goes in parallel.
+  const [services, held] = await Promise.all([servicesFor(ctx, pools, now), balances.all()]);
+  const seats = mine ? await seatsFor(ctx, pools, mine.evmAddress, mine.label, now) : [];
 
   return {
     network: deps.network,
@@ -500,6 +504,12 @@ class PoolStatusCache {
     { at: number; value: PoolAvailability | undefined }
   >();
   private readonly liveById = new Map<string, { at: number; terminal: boolean; value: LivePool }>();
+  // The reads themselves, while they are in flight. A cache that only fills on resolution is
+  // no help to the caller that arrives during the read it would have hit, and those are the
+  // callers there are: one request fans out to every panel on the page at once. Cleared in
+  // `finally`, so a failed read leaves nothing behind for the next one to join.
+  private readonly resolving = new Map<string, Promise<PoolAvailability | undefined>>();
+  private readonly reading = new Map<string, Promise<LivePool>>();
 
   constructor(private readonly ctx: DemoContext) {}
 
@@ -507,6 +517,15 @@ class PoolStatusCache {
     const hit = this.advertisedByUrl.get(resourceUrl);
     if (hit && Date.now() - hit.at < POOL_CACHE_MS) return hit.value;
 
+    let read = this.resolving.get(resourceUrl);
+    if (!read) {
+      read = this.readAdvertised(resourceUrl).finally(() => this.resolving.delete(resourceUrl));
+      this.resolving.set(resourceUrl, read);
+    }
+    return read;
+  }
+
+  private async readAdvertised(resourceUrl: string): Promise<PoolAvailability | undefined> {
     // Kept as the registry returned it. Flattening `available` into "the reason is undefined"
     // would mean decoding it again at the render site, and a boolean round-tripped through a
     // string is one more thing that can be got backwards.
@@ -536,8 +555,17 @@ class PoolStatusCache {
     const hit = this.liveById.get(poolId);
     if (hit && (hit.terminal || Date.now() - hit.at < POOL_CACHE_MS)) return hit.value;
 
+    let read = this.reading.get(poolId);
+    if (!read) {
+      read = this.ctx.coordinator.deps.registry
+        .availability(BigInt(poolId))
+        .then((availability) => this.remember(availability))
+        .finally(() => this.reading.delete(poolId));
+      this.reading.set(poolId, read);
+    }
+
     try {
-      return this.remember(await this.ctx.coordinator.deps.registry.availability(BigInt(poolId)));
+      return await read;
     } catch (error) {
       // A read that failed is not a fact about the pool. Fall back to whatever the index said.
       console.error(`pool ${poolId} could not be read: ${String(error)}`);
