@@ -6,8 +6,13 @@
  * Hedera entity ids, and a relay would be a second way of talking to the same contract with
  * its own account model and its own failures.
  *
- * Only what the coordinator and a demo need is here. Refunds are a payer's business and go
- * through the payer's own key, so they are not on this client.
+ * Only what the coordinator and a demo need is here.
+ *
+ * That now includes the reversal paths, which are not the coordinator's - `quorum-scheme.md` §9
+ * puts them deliberately outside it, so that getting your money back never depends on the
+ * liveness of the party whose failure you most need protection from. They are on this client
+ * because a demo has to be able to *show* that, and `claimRefund` shows it by being called
+ * through a client whose operator is the payer rather than the coordinator.
  */
 import {
   ContractCallQuery,
@@ -108,6 +113,18 @@ const GAS = {
   createPool: 300_000,
   recordDeposit: 300_000,
   release: 200_000,
+  // Both refund paths scan a deposit list and then transfer, and `_payout` forwards whatever
+  // gas is left to the payer - so the floor is the scan and the ceiling is whoever is being
+  // paid. These are sized for the plain accounts a pool of buyers actually holds. A payer
+  // contract that burns gas in its `receive()` is what `refundAll`'s window exists to step
+  // over, and stepping over it is the caller's move, not a larger number here.
+  claimRefund: 300_000,
+  // The one limit here that does not scale with what it is asked to do: `refundAll` takes a
+  // caller-chosen window and this is flat. It is sized for the windows this project drives -
+  // a pool's worth of deposits, single figures - where a refund costs tens of thousands of gas.
+  // A caller passing a window in the hundreds has to raise it, and `maxDeposits` is precisely
+  // what makes that the caller's problem to size rather than this constant's.
+  refundAll: 500_000,
 } as const;
 
 /** Query payments are capped rather than left to the SDK default. Views cost cents. */
@@ -194,6 +211,61 @@ export class PoolsClient {
     return summarise(await this.execute("release", GAS.release, args));
   }
 
+  /**
+   * Take back every refundable deposit the operator of this client holds in a pool.
+   *
+   * The payer's own path, so **the client's operator is who gets paid** - not an argument,
+   * because `msg.sender` is what the contract matches on and an address passed in here could
+   * only ever disagree with the key that signed. Call it through a client whose operator is
+   * the payer.
+   *
+   * Expires the pool on the way if the deadline has passed, so a refund never waits on anyone
+   * having called `expire` - which is why that method is on the contract and not on this
+   * client. Nothing needs to call it.
+   *
+   * Reverts `NothingToRefund` when the caller has no refundable deposit here: a pool that is
+   * still open, a seat in a pool that met its threshold, or a deposit already refunded. The
+   * revert is the answer, not a failure - `revertReasonOf` reads it back.
+   */
+  async claimRefund(poolId: bigint): Promise<CallResult & { tinybars: bigint }> {
+    const args = new ContractFunctionParameters().addUint256(long(poolId));
+    const call = await this.execute("claimRefund", GAS.claimRefund, args);
+    return {
+      ...summarise(call),
+      tinybars: BigInt(call.result.getUint256(0).toFixed()),
+    };
+  }
+
+  /**
+   * Push refunds to the payers of deposits in `[startIndex, startIndex + maxDeposits)`.
+   *
+   * Permissionless, and the path that actually runs at a failed deadline: a buyer who spent
+   * their HBAR on a seat may not hold the gas to claim it back, so somebody else pays for the
+   * transaction and the money still goes only where the deposits say. The caller is not the
+   * recipient of anything.
+   *
+   * Drive it by advancing `startIndex` a window at a time until it passes `depositCount`, not
+   * by calling until it returns zero - the contract's own note on why. That instruction is
+   * followable from here: `depositCount` is on this client for no other reason. Returns how
+   * many deposits this call refunded, which on a window of already-refunded rows is
+   * legitimately 0.
+   */
+  async refundAll(params: {
+    poolId: bigint;
+    startIndex: bigint;
+    maxDeposits: bigint;
+  }): Promise<CallResult & { refunded: bigint }> {
+    const args = new ContractFunctionParameters()
+      .addUint256(long(params.poolId))
+      .addUint256(long(params.startIndex))
+      .addUint256(long(params.maxDeposits));
+    const call = await this.execute("refundAll", GAS.refundAll, args);
+    return {
+      ...summarise(call),
+      refunded: BigInt(call.result.getUint256(0).toFixed()),
+    };
+  }
+
   async statusOf(poolId: bigint): Promise<PoolState> {
     const value = await this.query(
       "statusOf",
@@ -241,6 +313,23 @@ export class PoolsClient {
       state,
       resourceUrl: raw.resourceUrl,
     };
+  }
+
+  /**
+   * How many deposits a pool has recorded, counted and late alike.
+   *
+   * The bound `refundAll`'s window is driven against, and the only reason this is here - the
+   * contract says to advance `startIndex` until it passes this number, and a caller that could
+   * not read it had to call `depositAt` until it reverted instead. The index is no substitute:
+   * the subgraph's `Pool` carries `seats`, which counts only the deposits that took one, and a
+   * window sized from that would stop short of every late deposit - the rows that are
+   * refundable in *every* state, and the ones most likely to be waiting.
+   *
+   * Reverts `NoSuchPool` above `poolCount`, so callers bound the id first.
+   */
+  async depositCount(poolId: bigint): Promise<bigint> {
+    const args = new ContractFunctionParameters().addUint256(long(poolId));
+    return BigInt((await this.queryUint256("depositCount", args)).toFixed());
   }
 
   /**

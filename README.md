@@ -163,13 +163,16 @@ clone, not from a developer's machine.
 status table over a real listener with the chain, the facilitator and the index all stubbed.
 Nothing in it touches a network, and nothing in it makes several distinct buyers fill one pool.
 
-`npm run e2e` does. It opens a pool on the deployed contract, has three separate accounts buy
-seats through the coordinator, waits for the subgraph, redeems a seat against a signature, and
-releases the pool to its recipient — all on Hedera testnet, settled through Blocky402.
+`npm run e2e` does. It runs two scenarios against Hedera testnet, settled through Blocky402 and
+read back through the live subgraph — the crowd that arrives, and the crowd that does not. Both
+run by default, because a run that only ever proves the *all* half of an all-or-nothing
+primitive has demonstrated the easy direction.
 
 ```bash
-npm run e2e -- --check   # preflight only: config, reachability, balances. Spends nothing
-npm run e2e              # the full run, about 40 seconds
+npm run e2e -- --check              # preflight only: config, reachability, balances. Spends nothing
+npm run e2e                         # both scenarios, about three and a half minutes
+npm run e2e -- --scenario met       # just the crowd that arrived, about 40 seconds
+npm run e2e -- --scenario missed    # just the refund path
 ```
 
 It needs `.env` filled in (including `SUBGRAPH_URL`) and a `.accounts.json` holding at least
@@ -177,11 +180,14 @@ four accounts — `npm run accounts:create -- 4`. The preflight checks every bal
 if one is short, prints the account id to paste into
 [the faucet](https://portal.hedera.com/faucet) rather than failing partway through a run.
 
-A run costs the seat price times three, plus gas — about 0.3 HBAR at the default 0.1 HBAR
-seat. Use `--seat` to change it; the price is a property of the pool, written on-chain at
-creation, so it changes what a run costs and nothing about what it proves.
+Both scenarios together cost about 0.3 HBAR at the default 0.1 HBAR seat, plus gas: the met run
+pays three seats to the seller and keeps none of it back, and the missed run's two seats are
+refunded in full. Use `--seat` to change the price; it is a property of the pool, written
+on-chain at creation, so it changes what a run costs and nothing about what it proves.
 
-What it asserts, in order:
+### The crowd arrives
+
+Three separate accounts buy seats through the coordinator, one redeems, and the seller is paid.
 
 | | |
 |---|---|
@@ -193,9 +199,35 @@ What it asserts, in order:
 | **the impostor** | a second buyer presenting the first's settlement is refused **403** — a seat belongs to the payer, not to whoever holds the receipt |
 | the money out | the recipient received exactly three seats, and the contract's commitments fell by the same |
 
-Each run opens its own pool on an ephemeral port, so the resource URL it sells is one no
-earlier pool can name — the licence row above asserts exactly that. The rest of the isolation is
-a design property rather than a measured one: concurrent runs should not interfere, and a run
+### The crowd falls one seat short
+
+Two of the three buyers pay, the deadline passes, and everybody gets their money back. One seat
+short rather than empty, because all-or-nothing has to mean all-or-nothing and *close enough* is
+where it would be tempting not to.
+
+[§9](specs/quorum-scheme.md#9-reversal) puts reversal deliberately outside HTTP, and both of the
+paths it names run here — they protect different people. A payer who can afford the gas pulls
+their own money back and needs nobody. A payer who cannot has it pushed to them by a bystander
+who gains nothing by doing it. Neither goes near the coordinator, which is the point: the party
+whose failure a payer most needs protection from is the one that failed to sell them the thing.
+
+| | |
+|---|---|
+| **402 → 202, twice** | both buyers settle for real and are told the resource is still pending |
+| one seat short | the pool reads back **two of three seats taken** — two payments that took no seat would leave it just as `Open`, and the whole scenario rests on the difference |
+| lazy expiry | past its deadline `statusOf` reads `Expired` while the pool is still *stored* `Open` — the two disagree only in that window, which is how the run shows the clock decided and no keeper stamped anything |
+| **the latecomer** | the third buyer is refused **404** before it builds a payment: the coordinator stops selling half a minute before it stops being able to deliver, so the money is never taken |
+| **the expired seat** | the payer redeeming is refused **409 `pool-expired`** — and told the contract and method to reclaim at, which is the whole of what a coordinator owes a pool it could not fill |
+| the pull | `claimRefund`, signed with the payer's own key, returns exactly one seat |
+| the push | `refundAll` from a bystander returns the rest, and skips the deposit already claimed |
+| **whole** | the pushed payer holds *exactly* what it held before it paid — refunded, having paid nothing for the privilege. The payer that claimed is down only its own gas |
+| the contract | commitments fell by both seats, and its balance is back where it started — it kept none of it |
+
+Each scenario opens its own pool on its own ephemeral port, so the resource URL it sells is one
+no earlier pool can name. Two rows depend on that and would otherwise be quietly wrong: the
+licence proves the resource served belongs to *this* pool, and the latecomer's 404 means "no
+pool is selling this" rather than "some older pool answered instead". The rest of the isolation
+is a design property rather than a measured one: concurrent runs should not interfere, and a run
 that dies should leave behind only a pool that expires into refundable. Neither has been tested.
 
 ## Demo
@@ -217,7 +249,8 @@ src/
   buyer/      a buyer that answers a quorum 402 with no human in the loop
   benchmark/  the resource being sold, and why one buyer cannot buy it alone
 scripts/      deployment, the demo, and checks against Hedera testnet that anyone can re-run
-  e2e/        the end-to-end run: a crowd fills one pool, a seat is redeemed, the seller is paid
+  e2e/        the end-to-end runs: a crowd fills one pool and the seller is paid, and a crowd
+              that falls one seat short is refunded to the tinybar
 deployments/  what is deployed where, and the hash that proves it is this code
 subgraph/     the subgraph, and the graph-node that has to run it - see subgraph/README.md
 test/         contract tests, run on a local EVM pinned to Hedera's target

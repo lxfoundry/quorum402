@@ -37,10 +37,11 @@ const PROBE = "preflight-probe";
 /**
  * What the coordinator needs to see the run through.
  *
- * Five state-changing calls - `createPool`, one `recordDeposit` per buyer, `release` - plus the
- * view queries the server makes per request, which the SDK caps at 1 HBAR each. Observed cost
- * is a small fraction of this. The floor is not an estimate of the bill; it is the point at
- * which failing up front beats discovering the shortfall after two buyers have already paid.
+ * Per scenario: `createPool`, one `recordDeposit` per buyer, and `release` or `refundAll` -
+ * plus the view queries the server makes per request, which the SDK caps at 1 HBAR each and
+ * which dominate this number. Observed cost is a small fraction of it, and it is not an
+ * estimate of the bill: it is the point at which failing up front beats discovering the
+ * shortfall after two buyers have already paid.
  */
 const OPERATOR_FLOOR = hbarToTinybars("15");
 
@@ -53,6 +54,17 @@ const OPERATOR_FLOOR = hbarToTinybars("15");
  */
 const BUYER_HEADROOM = hbarToTinybars("0.1");
 
+/**
+ * What a buyer needs on top of that if it is going to claim its own refund.
+ *
+ * The missed run has one payer call `claimRefund` with its own key, which is the only place in
+ * either scenario a buyer pays for a transaction - everywhere else the facilitator is the fee
+ * payer and a bystander pushes. Required of every buyer rather than of the one that claims,
+ * because which of them claims is the scenario's business and not this file's, and testnet HBAR
+ * costs a faucet visit.
+ */
+const CLAIM_ALLOWANCE = hbarToTinybars("1");
+
 export interface PreflightParams {
   cfg: Config;
   /** Every account that will pay for a seat. */
@@ -60,6 +72,8 @@ export interface PreflightParams {
   /** Where the pool pays out. Needs to exist; needs no balance. */
   recipient: GeneratedAccount;
   seatPriceTinybars: bigint;
+  /** Whether a payer will pull its own refund, and so needs gas of its own. */
+  claimsRefund?: boolean;
 }
 
 interface Shortfall {
@@ -70,7 +84,7 @@ interface Shortfall {
 
 /** Whether the run may proceed. Reports everything it checked either way. */
 export async function preflight(report: Reporter, params: PreflightParams): Promise<boolean> {
-  const { cfg, buyers, recipient, seatPriceTinybars } = params;
+  const { cfg, buyers, recipient, seatPriceTinybars, claimsRefund } = params;
   const network = caip2(cfg.network);
   const before = report.failures;
 
@@ -115,15 +129,10 @@ export async function preflight(report: Reporter, params: PreflightParams): Prom
   report.step("funding");
   const shortfalls: Shortfall[] = [];
   await require_(report, shortfalls, cfg, "operator", cfg.operatorId, OPERATOR_FLOOR);
+  const buyerFloor =
+    seatPriceTinybars + BUYER_HEADROOM + (claimsRefund ? CLAIM_ALLOWANCE : 0n);
   for (const buyer of buyers) {
-    await require_(
-      report,
-      shortfalls,
-      cfg,
-      buyer.label,
-      buyer.accountId,
-      seatPriceTinybars + BUYER_HEADROOM,
-    );
+    await require_(report, shortfalls, cfg, buyer.label, buyer.accountId, buyerFloor);
   }
   // The recipient is measured either side of the release, so it only has to exist. Reading its
   // balance is the check: the mirror node 404s on an account that does not.

@@ -11,10 +11,32 @@
  * for while it does, or a stall looks identical to a hang.
  */
 import type { AddressInfo } from "node:net";
+import type { Benchmark } from "../../src/benchmark/catalogue.js";
+import type { Config } from "../../src/config.js";
 import { createApp } from "../../src/server/index.js";
 import type { ServerDeps } from "../../src/server/index.js";
+import type { GeneratedAccount } from "../create-accounts.js";
 
 const TINYBARS_PER_HBAR = 100_000_000n;
+
+/**
+ * What every scenario needs to run: who is on the network, who is buying, and what a seat costs.
+ *
+ * Shared rather than declared per scenario, because the two runs sell the same resource to the
+ * same cast and differ only in how many of them turn up. `ttlSeconds` is the exception worth
+ * naming - it is a ceiling in the met run and the run's own length in the missed one, so each
+ * scenario names its own default and `index.ts` chooses.
+ */
+export interface ScenarioParams {
+  cfg: Config;
+  benchmark: Benchmark;
+  contractId: string;
+  /** The pool's size. Whether they all pay is what separates the scenarios. */
+  buyers: GeneratedAccount[];
+  recipient: GeneratedAccount;
+  seatPriceTinybars: bigint;
+  ttlSeconds: number;
+}
 
 /**
  * Progress, and whether anything went wrong, in `check-payout.ts`'s idiom.

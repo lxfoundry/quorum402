@@ -50,6 +50,7 @@ was rejected.
 | 2026-09-08 | ADR 0006 and the coordinator's payment leg (`src/server/`) | Found that the solvency guard's arithmetic cancels, so every `recordDeposit` precondition can be checked before the irreversible step; wrote the pool registry, the requirement builders, the payer derivation and the preflight gate, with tests at each boundary | Set the rule the design had to satisfy — that every condition for recording must hold *before* settle is relayed — and rejected the first design's post-settlement balance polling. Chose an HCS topic over a private failure store, on the grounds that the coordinator's own failures should not be the only events nobody else can audit |
 | 2026-09-08 | The coordinator over HTTP (`src/server/index.ts`, `src/buyer/agent.ts`) | Wrote the §6 lifecycle, the receipt, the buyer that answers a 402 on its own, and tests driving every status-table row over a real listening server with the chain stubbed | Approved the testnet spend and set its bound. Called for a seller account distinct from the coordinator, which ADR 0003 assumes and a pool paying its own coordinator would not have shown |
 | 2026-09-09 | Receipt redemption (`src/server/redeem.ts`, `src/x402/redemption.ts`, `src/graph/client.ts`) | Wrote §8's canonical message and its verifier, the subgraph client the lookup needs, and the buyer's redemption path; checked every GraphQL query against the live index before building on it | Required that the index resolve only a *position*, with `payer` and `counted` read back from the contract — an indexer must not be able to make a seat valid. Rejected folding two new refusals into §6's catch-all 401, since a payer can act on only one of the three |
+| 2026-09-09 | The refund path, end to end (`scripts/e2e/quorum-missed.ts`, `src/pool/client.ts`) | Found that the contract's two refund methods had no caller anywhere above Solidity, added them to the pool client, and wrote the scenario that drives a pool past its deadline one seat short and refunds both payers on testnet | Chose to spend the remaining build time proving the failure path rather than finishing the README, on the grounds that a demo of an all-or-nothing primitive that only ever shows the *all* has shown the easy half. Called for both of §9's reversal paths in one run rather than the cheaper one, since they exist for different people |
 
 ## 4. What was done without AI
 
@@ -330,6 +331,27 @@ run sells on an ephemeral port, so its resource URL is one no earlier pool can n
 is an argument, not a measurement. Recorded because the failure is self-flattering: a
 verification step that cannot fail reads exactly like one that passed.
 
+**2026-09-09 — a well-tested function nothing could call.** `claimRefund` and `refundAll` had
+unit tests over the arithmetic, the expiry ordering, the already-refunded skip and a payer
+contract that burns the gas it is sent. What they did not have was a caller. `PoolsClient`
+exposed `createPool`, `recordDeposit` and `release` and stopped, under a header comment saying
+refunds were "a payer's business and go through the payer's own key, so they are not on this
+client" — which is true, and was quietly doing the work of a decision. Every layer above the
+contract was therefore structurally incapable of reaching the half of the primitive the README
+leads with: no script, no demo and no end-to-end run could refund anybody. The coverage
+answered "is this function correct" completely, and nothing in the suite or the type system
+asks "can anything reach it". A public interface that stops one method short of a claim the
+project makes is not visible as an absence — it looks exactly like a finished interface.
+
+The same day's second lesson is the one underneath it. `test/redemption.ts` already asserted the
+409-with-reclaim ruling for an expired pool, over injected state; `test/refunds.ts` already
+asserted the refund arithmetic, on an in-process EVM. Both passed, and neither had ever seen a
+pool expire because a real clock passed a real deadline. The scenario written to close that gap
+passed on its first run against testnet, which is worth recording precisely because it is not
+evidence of much: every mechanism it drives was already exercised somewhere, and what was
+missing was never a mechanism. It was the choreography, and the choreography is the part a unit
+test is defined not to have.
+
 ## 6. Review, and what it caught
 
 The contract was reviewed by a second Claude Code session given only the diff, the spec and
@@ -482,3 +504,33 @@ Worth recording separately: `src/graph/client.ts` had no tests. Every test in th
 thing a subgraph is free to vary, and where both of these defects lived — had only ever been
 exercised against testnet, on the path where nothing goes wrong. It has eight now, seven of them
 about partial success.
+
+The refund branch was reviewed before it merged, given the diff, the specs and the ADRs. Nothing
+in the code was wrong. Three of the four findings were assertions that could not fail.
+
+The run's headline claim is that the crowd fell one seat short, and the only thing it read to
+support that was `statusOf` — which answers `Open` for a pool nobody was seated in exactly as
+readily as for one holding two of three seats. The lazy-expiry assertion had the same shape from
+the other end: `statusOf` resolves the deadline live, so it reads `Expired` whether or not
+anything stamped the pool, and the assertion therefore held just as well against the eager keeper
+ADR 0004 exists to argue against. And `refundAll`'s docstring told a caller to advance its window
+against `depositCount`, which was on the contract and not on this client — an instruction
+unfollowable from the language it was written for.
+
+That last one is this branch's own bug, one level up. The branch exists because `claimRefund` and
+`refundAll` were fully tested and had no caller; it then shipped a documented path with nothing
+able to walk it. The lesson did not generalise one step beyond the case that taught it.
+
+Four reviews running, the same category: prose asserting a property nothing reached. What is new
+is where it landed. The earlier ones found it in specs describing contracts, where the prose and
+the thing it describes are visibly different artifacts. This one found it in a test's own success
+messages, which is the hardest place to see it, because a passing run reads as evidence — and a
+passing run of an assertion that cannot fail reads identically.
+
+The fourth finding was not that shape, and was the one with money behind it. The deadline wait
+slept until the local clock passed the deadline and then one second more: the only assumption in
+a harness that otherwise polls three networks for everything. A clock ahead of consensus by more
+than that second does not produce a flaky assertion — the `claimRefund` after it reverts, the
+revert throws, and the scenario unwinds before `refundAll` runs, leaving both deposits in the
+contract with nothing left in the run to push them back out. The cost of the assumption was not
+the assertion it broke but the four steps behind it that never got to run.

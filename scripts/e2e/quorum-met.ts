@@ -12,9 +12,7 @@
  */
 import { AccountId, Client, ContractId, PrivateKey } from "@hiero-ledger/sdk";
 import { resourceUrlFor } from "../../src/benchmark/catalogue.js";
-import type { Benchmark } from "../../src/benchmark/catalogue.js";
 import { caip2 } from "../../src/config.js";
-import type { Config } from "../../src/config.js";
 import { GraphClient } from "../../src/graph/client.js";
 import { accountOf, awaitBalance, balanceTinybars, evmAddressOf } from "../../src/hedera/mirror.js";
 import { PoolsClient } from "../../src/pool/client.js";
@@ -23,19 +21,8 @@ import { PoolRegistry } from "../../src/server/pools.js";
 import type { ServerDeps } from "../../src/server/index.js";
 import { Facilitator } from "../../src/x402/facilitator.js";
 import { buySeat, redeemSeat } from "../../src/buyer/agent.js";
-import type { GeneratedAccount } from "../create-accounts.js";
 import { awaitIndexed, hbar, startCoordinator } from "./harness.js";
-import type { Reporter } from "./harness.js";
-
-export interface ScenarioParams {
-  cfg: Config;
-  benchmark: Benchmark;
-  contractId: string;
-  buyers: GeneratedAccount[];
-  recipient: GeneratedAccount;
-  seatPriceTinybars: bigint;
-  ttlSeconds: number;
-}
+import type { Reporter, ScenarioParams } from "./harness.js";
 
 export async function quorumMet(report: Reporter, params: ScenarioParams): Promise<void> {
   const { cfg, benchmark, contractId, buyers, recipient, seatPriceTinybars } = params;
