@@ -74,9 +74,13 @@ export function encodeRedemptionReceipt(receipt: RedemptionReceipt): string {
 /**
  * Decode and shape-check a presented receipt.
  *
- * Returns `undefined` for anything malformed rather than throwing, matching `decodeHeaderValue`:
- * every caller is a request handler that answers 400, and the distinction between "not base64",
- * "not JSON" and "missing a field" is not one a payer can act on differently.
+ * Returns `undefined` for anything malformed rather than throwing, for the same reason as
+ * `decodeHeaderValue`: the caller is a request handler, and the distinction between "not
+ * base64", "not JSON" and "missing a field" is not one a payer can act on differently.
+ *
+ * It becomes a **401**, not the 400 a malformed *payment* payload gets. §6 gives redemption its
+ * own rows: a receipt that will not decode is a proof that does not stand up, which is a
+ * different thing from a payload that does not match the terms advertised.
  */
 export function decodeRedemptionReceipt(header: string | undefined): RedemptionReceipt | undefined {
   if (!header) return undefined;
