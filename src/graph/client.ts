@@ -115,6 +115,38 @@ export class GraphClient {
     return data.deposits.length > 0;
   }
 
+  /**
+   * The settlement one payer's deposit in one pool was recorded under.
+   *
+   * A convenience for the demo CLI and **not** part of §8: a payer normally keeps the id their
+   * own payment returned, and the protocol asks them to present it. It is here because the
+   * index is the only place that id survives, so a buyer who lost it has exactly one way back
+   * to their own seat.
+   *
+   * Takes the earliest, which for a counted deposit is the only one - a second payment from an
+   * address that already holds a seat is late by construction.
+   */
+  async settlementFor(poolId: string, payerAddress: string): Promise<string | undefined> {
+    const query = `
+      query SettlementFor($poolId: String!, $payer: String!) {
+        deposits(
+          where: { pool: $poolId, payerAddress: $payer, counted: true }
+          orderBy: depositId
+          orderDirection: asc
+          first: 1
+        ) {
+          hederaTxId
+        }
+      }`;
+    const data = await this.request<{ deposits: Array<{ hederaTxId: string }> }>(query, {
+      poolId,
+      // The index stores addresses lowercase, and a checksummed one would silently match
+      // nothing rather than failing.
+      payer: payerAddress.toLowerCase(),
+    });
+    return data.deposits[0]?.hederaTxId;
+  }
+
   /** The last block the index has ingested. Reported with a refusal, so lag is diagnosable. */
   async indexedBlock(): Promise<bigint | undefined> {
     const data = await this.request<{ _meta?: { block?: { number?: number } } }>(

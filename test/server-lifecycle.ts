@@ -16,7 +16,7 @@ import { FailureReporter } from "../src/server/failures.js";
 import { PoolRegistry } from "../src/server/pools.js";
 import type { PoolReader } from "../src/server/pools.js";
 import { quorumRequirements } from "../src/server/requirements.js";
-import { resourceUrlFor } from "../src/benchmark/catalogue.js";
+import { benchmarkFor, resourceUrlFor } from "../src/benchmark/catalogue.js";
 import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
@@ -413,7 +413,9 @@ describe("§6 lifecycle", () => {
     assert.equal(res.status, 200);
     // The same document the paying path serves, licensed to the redeeming account and citing
     // the settlement it descends from. A seat is a seat however it is presented.
-    assert.equal(res.body.benchmark, "agent-spend-eu");
+    // The benchmark's id, which is the slug plus the week it covers - a licence names the
+    // edition that was bought, not the URL it was bought at.
+    assert.equal(res.body.benchmark, benchmarkFor(SLUG)?.id);
     assert.equal(res.body.licensee, BUYER);
     assert.equal(res.body.settledUnder, "0.0.7162784@1788894730.022621899");
     assert.equal(res.body.contributors, 3);
