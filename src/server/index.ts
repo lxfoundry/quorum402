@@ -518,8 +518,16 @@ function detail(rejection: { reason: string; detail: string }) {
 export interface Coordinator {
   deps: ServerDeps;
   pools: PoolsClient;
-  /** The SDK client `pools` signs with. The caller closes it. */
-  client: Client;
+  /**
+   * The index, whole.
+   *
+   * `ServerDeps.index` is deliberately narrowed to the two methods serving a request needs, so
+   * that a test can inject a pair of stubs. A second entry point listing a payer's own seats
+   * needs `depositsFor` as well, and reaching it by widening that `Pick` would make every stub
+   * implement a method the coordinator itself never calls. Handing back the client this function
+   * built costs nothing and keeps the narrow type honest.
+   */
+  index?: GraphClient;
   cfg: Config;
   contractId: string;
 }
@@ -537,11 +545,12 @@ export async function wireCoordinator(): Promise<Coordinator> {
   );
   const pools = new PoolsClient(client, ContractId.fromString(deployment.contractId));
   const coordinatorAddress = await evmAddressOf(cfg.mirrorUrl, cfg.operatorId);
+  const index = cfg.subgraphUrl ? new GraphClient({ url: cfg.subgraphUrl }) : undefined;
 
   return {
     cfg,
-    client,
     pools,
+    index,
     contractId: deployment.contractId,
     deps: {
       registry: new PoolRegistry(pools),
@@ -556,7 +565,7 @@ export async function wireCoordinator(): Promise<Coordinator> {
       coordinatorAddress,
       accountOf: (accountId) => accountOf(cfg.mirrorUrl, accountId),
       coordinatorBalanceTinybars: () => balanceTinybars(cfg.mirrorUrl, cfg.operatorId),
-      index: cfg.subgraphUrl ? new GraphClient({ url: cfg.subgraphUrl }) : undefined,
+      index,
     },
   };
 }

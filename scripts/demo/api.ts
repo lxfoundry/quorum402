@@ -26,7 +26,7 @@ import {
   resourceUrlFor,
 } from "../../src/benchmark/catalogue.js";
 import { buySeat, redeemSeat } from "../../src/buyer/agent.js";
-import type { GraphClient, IndexedPool } from "../../src/graph/client.js";
+import type { IndexedDeposit, IndexedPool } from "../../src/graph/client.js";
 import {
   hashscanAccount,
   hashscanContract,
@@ -230,8 +230,8 @@ async function seatsFor(
   );
   const remembered = ctx.memory.forWallet(label);
 
-  let indexed: Awaited<ReturnType<GraphClient["depositsFor"]>>["deposits"] = [];
-  const index = ctx.coordinator.deps.index as GraphClient | undefined;
+  let indexed: IndexedDeposit[] = [];
+  const index = ctx.coordinator.index;
   if (index) {
     try {
       indexed = (await index.depositsFor(evmAddress)).deposits;
