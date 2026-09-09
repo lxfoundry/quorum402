@@ -18,13 +18,26 @@
  * "not indexed yet" as its own answer rather than as absence.
  */
 
-/** What the index knows about one settled payment. Positions, not entitlements. */
-export interface IndexedDeposit {
+/**
+ * What the index can say about one settled payment. A position, and how far it has read.
+ *
+ * Only the position: the log also records the payer and whether the deposit counted, and this
+ * deliberately returns neither. Those two facts are what entitlement turns on, they are read
+ * back from the contract at this position, and handing a caller an indexed copy of them would
+ * put a second, weaker answer to the same question within reach.
+ */
+export interface DepositLookup {
   /** The index into the pool's deposit array. What `depositAt` takes. */
-  depositId: bigint;
-  /** The address the log recorded. Cross-checked against the contract, never trusted alone. */
-  payerAddress: string;
-  counted: boolean;
+  depositId?: bigint;
+  /**
+   * The last block the index has ingested.
+   *
+   * Read in the same query as the deposit, because the case that needs it is the one where
+   * there is no deposit - "not indexed yet" is the ordinary answer seconds after a payment,
+   * and asking a second time to find out how far behind it is doubles the cost of the most
+   * retried refusal on the path.
+   */
+  indexedBlock?: bigint;
 }
 
 export interface GraphClientOptions {
@@ -40,6 +53,11 @@ const DEFAULT_TIMEOUT_MS = 5_000;
 interface GraphResponse<T> {
   data?: T;
   errors?: Array<{ message: string }>;
+}
+
+function blockOf(meta: { block?: { number?: number } } | undefined): bigint | undefined {
+  const number = meta?.block?.number;
+  return number === undefined ? undefined : BigInt(number);
 }
 
 export class GraphClient {
@@ -60,7 +78,7 @@ export class GraphClient {
    * not been indexed yet. The two are not distinguishable from here and the caller must not
    * treat either as proof that no payment was made.
    */
-  async depositFor(poolId: string, hederaTxId: string): Promise<IndexedDeposit | undefined> {
+  async depositFor(poolId: string, hederaTxId: string): Promise<DepositLookup> {
     // Filtered on both, not just the transaction id: the id is unique across the contract by
     // the replay guard, but querying it alone would let a wrong `poolId` in a receipt be
     // answered with a real deposit from another pool. Bounded at 2 so a duplicate is visible
@@ -72,15 +90,15 @@ export class GraphClient {
           first: 2
         ) {
           depositId
-          payerAddress
-          counted
         }
+        _meta { block { number } }
       }`;
     const data = await this.request<{
-      deposits: Array<{ depositId: string; payerAddress: string; counted: boolean }>;
+      deposits: Array<{ depositId: string }>;
+      _meta?: { block?: { number?: number } };
     }>(query, { poolId, txId: hederaTxId });
 
-    if (data.deposits.length === 0) return undefined;
+    const indexedBlock = blockOf(data._meta);
     if (data.deposits.length > 1) {
       // The contract's replay guard is global, so this cannot happen against a sound index.
       // If it ever does, the index disagrees with consensus and guessing would be the wrong
@@ -88,12 +106,7 @@ export class GraphClient {
       throw new Error(`index reports ${data.deposits.length} deposits for ${hederaTxId}`);
     }
     const [deposit] = data.deposits;
-    if (!deposit) return undefined;
-    return {
-      depositId: BigInt(deposit.depositId),
-      payerAddress: deposit.payerAddress,
-      counted: deposit.counted,
-    };
+    return deposit ? { depositId: BigInt(deposit.depositId), indexedBlock } : { indexedBlock };
   }
 
   /**
@@ -145,16 +158,6 @@ export class GraphClient {
       payer: payerAddress.toLowerCase(),
     });
     return data.deposits[0]?.hederaTxId;
-  }
-
-  /** The last block the index has ingested. Reported with a refusal, so lag is diagnosable. */
-  async indexedBlock(): Promise<bigint | undefined> {
-    const data = await this.request<{ _meta?: { block?: { number?: number } } }>(
-      `query { _meta { block { number } } }`,
-      {},
-    );
-    const number = data._meta?.block?.number;
-    return number === undefined ? undefined : BigInt(number);
   }
 
   private async request<T>(query: string, variables: Record<string, unknown>): Promise<T> {

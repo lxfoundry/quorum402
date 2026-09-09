@@ -16,7 +16,7 @@
  */
 import { PublicKey } from "@hiero-ledger/sdk";
 import type { Deposit, PoolState, PoolTerms } from "../pool/client.js";
-import type { AccountKeyType } from "../hedera/mirror.js";
+import type { AccountKeyType, MirrorAccount } from "../hedera/mirror.js";
 import { canonicalRedemptionMessage } from "../x402/redemption.js";
 import type { RedemptionReceipt } from "../x402/redemption.js";
 
@@ -37,7 +37,7 @@ export const MAX_VALIDITY_WINDOW_SECONDS = 900;
  * seconds late rather than a few seconds early, because the cost of the first is one retry and
  * the cost of the second is a valid seat that will not open.
  */
-export const EXPIRY_SKEW_SECONDS = 30;
+const EXPIRY_SKEW_SECONDS = 30;
 
 export type RedemptionRefusal =
   /** The header would not decode, or the signature does not verify. §6: 401. */
@@ -70,29 +70,30 @@ export interface Reclaim {
 }
 
 export type RedemptionResult =
-  | { ok: true; payer: string; depositId: bigint; seat: { filled: number; threshold: number } }
+  /** The address the seat belongs to. The pool's fill is the caller's `terms`, not repeated here. */
+  | { ok: true; payer: string }
   | ({ ok: false } & RedemptionRefusal);
-
-/** One account, as the ledger holds it. */
-export interface LedgerAccount {
-  evmAddress: string;
-  key: { type: AccountKeyType; hex: string };
-}
 
 export interface RedeemDeps {
   network: string;
   /** The pool contract's Hedera id. Bound into the signature, so it cannot cross deployments. */
   contractId: string;
   /** §8 step 2. Both facts, from one record. */
-  accountOf: (accountId: string) => Promise<LedgerAccount>;
-  /** §8 step 4, first half: the id resolves to a position through the binding's logs. */
-  depositIdFor: (poolId: string, hederaTxId: string) => Promise<bigint | undefined>;
+  accountOf: (accountId: string) => Promise<MirrorAccount>;
+  /**
+   * §8 step 4, first half: the id resolves to a position through the binding's logs.
+   *
+   * Answers with how far the index has read as well, because the refusal that needs that is
+   * the one where there is no position - and asking separately would charge the most retried
+   * answer on this path two round trips instead of one.
+   */
+  depositFor: (
+    poolId: string,
+    hederaTxId: string,
+  ) => Promise<{ depositId?: bigint; indexedBlock?: bigint }>;
   /** §8 step 4, second half: payer and `counted` come back from consensus state. */
   depositAt: (poolId: bigint, depositId: bigint) => Promise<Deposit>;
-  /** Reported with a "not indexed" refusal so lag is diagnosable rather than mysterious. */
-  indexedBlock?: () => Promise<bigint | undefined>;
   now?: () => number;
-  maxValidityWindowSeconds?: number;
 }
 
 /**
@@ -109,23 +110,10 @@ export async function redeem(
   const { receipt, resourceUrl, terms, state } = params;
   const now = Math.floor((deps.now?.() ?? Date.now()) / 1000);
 
-  // §8 rule 1. Before anything is looked up: an expiry check needs no ledger and no index, and
-  // running it first means a stale receipt costs two network reads less than a fresh one.
-  const window = deps.maxValidityWindowSeconds ?? MAX_VALIDITY_WINDOW_SECONDS;
-  if (receipt.validUntil + EXPIRY_SKEW_SECONDS < now) {
-    return {
-      ok: false,
-      reason: "expired-proof",
-      detail: `receipt expired at ${receipt.validUntil}, now ${now}`,
-    };
-  }
-  if (receipt.validUntil > now + window) {
-    return {
-      ok: false,
-      reason: "expired-proof",
-      detail: `receipt is valid until ${receipt.validUntil}, more than ${window}s ahead of ${now}`,
-    };
-  }
+  // §8 rule 1, first and cheapest. Repeated here rather than trusted from the caller: `redeem`
+  // is the unit that answers §8, and a caller that forgot would fail open.
+  const stale = expiredProof(receipt, now);
+  if (stale) return { ok: false, ...stale };
 
   // The pool named in the receipt must be the pool this URL is selling. Checked here rather than
   // trusted from the signature: the signature proves the payer meant this pool, not that this
@@ -139,7 +127,7 @@ export async function redeem(
   }
 
   // §8 steps 2 and 3.
-  let account: LedgerAccount;
+  let account: MirrorAccount;
   try {
     account = await deps.accountOf(receipt.accountId);
   } catch (error) {
@@ -170,14 +158,14 @@ export async function redeem(
   // those is a bad proof or a missing deposit, so they get their own answer rather than
   // borrowing 401 or 404 - and in particular the payer must not be told their seat does not
   // exist because the index is down.
-  let depositId: bigint | undefined;
+  let found: { depositId?: bigint; indexedBlock?: bigint };
   try {
-    depositId = await deps.depositIdFor(receipt.poolId, receipt.transaction);
+    found = await deps.depositFor(receipt.poolId, receipt.transaction);
   } catch (error) {
     return unavailable("the index could not be reached", error);
   }
+  const { depositId, indexedBlock } = found;
   if (depositId === undefined) {
-    const indexedBlock = await deps.indexedBlock?.().catch(() => undefined);
     return {
       ok: false,
       reason: "no-such-deposit",
@@ -225,12 +213,7 @@ export async function redeem(
   // entitles every counted payer, and testing for `Met` alone would withhold the resource the
   // moment the payout landed - the coupling §6 forbids.
   if (state === "Met" || state === "Released") {
-    return {
-      ok: true,
-      payer: deposit.payer,
-      depositId,
-      seat: { filled: terms.seats, threshold: terms.threshold },
-    };
+    return { ok: true, payer: deposit.payer };
   }
   if (state === "Expired") {
     return {
@@ -251,12 +234,49 @@ export async function redeem(
 
 /** A read failed, and the failure is this server's rather than the payer's. */
 function unavailable(detail: string, error: unknown): RedemptionResult {
+  return { ok: false, ...unreadable(detail, error) };
+}
+
+/**
+ * A read this decision needed could not be made.
+ *
+ * Exported because the caller has reads of its own - which pool sells this URL, and what it is
+ * doing - that fail the same way and owe the payer the same answer. One constructor, so a
+ * failure before `redeem` is reached and one inside it cannot be reported differently.
+ */
+export function unreadable(detail: string, error: unknown): RedemptionRefusal {
   return {
-    ok: false,
     reason: "index-unavailable",
     detail,
     cause: error instanceof Error ? error.message : String(error),
   };
+}
+
+/**
+ * §8 rule 1: is this receipt in date? The only check on the path that touches no network.
+ *
+ * Exported so a caller can run it before paying for a single read. §8 puts expiry first, and
+ * that ordering buys nothing if the pool has already been fetched from the chain by the time
+ * the clock is consulted - which is the difference between a stale receipt costing three
+ * contract queries and costing none.
+ */
+export function expiredProof(
+  receipt: { validUntil: number },
+  now: number = Math.floor(Date.now() / 1000),
+): RedemptionRefusal | undefined {
+  if (receipt.validUntil + EXPIRY_SKEW_SECONDS < now) {
+    return {
+      reason: "expired-proof",
+      detail: `receipt expired at ${receipt.validUntil}, now ${now}`,
+    };
+  }
+  if (receipt.validUntil > now + MAX_VALIDITY_WINDOW_SECONDS) {
+    return {
+      reason: "expired-proof",
+      detail: `receipt is valid until ${receipt.validUntil}, more than ${MAX_VALIDITY_WINDOW_SECONDS}s ahead of ${now}`,
+    };
+  }
+  return undefined;
 }
 
 /**

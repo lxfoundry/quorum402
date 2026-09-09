@@ -11,6 +11,7 @@
  * agree on the fields and disagree on the separators produce signatures that never verify, and
  * the failure says only "bad signature".
  */
+import { decodeHeaderValue, encodeHeaderValue } from "./http.js";
 
 /** The claim a payer presents, base64-encoded into the header. */
 export interface RedemptionReceipt {
@@ -68,7 +69,7 @@ export function canonicalRedemptionMessage(claim: RedemptionClaim): Buffer {
 }
 
 export function encodeRedemptionReceipt(receipt: RedemptionReceipt): string {
-  return Buffer.from(JSON.stringify(receipt), "utf8").toString("base64");
+  return encodeHeaderValue(receipt);
 }
 
 /**
@@ -83,15 +84,8 @@ export function encodeRedemptionReceipt(receipt: RedemptionReceipt): string {
  * different thing from a payload that does not match the terms advertised.
  */
 export function decodeRedemptionReceipt(header: string | undefined): RedemptionReceipt | undefined {
-  if (!header) return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
-  } catch {
-    return undefined;
-  }
-  if (typeof parsed !== "object" || parsed === null) return undefined;
-  const candidate = parsed as Record<string, unknown>;
+  const candidate = decodeHeaderValue<Record<string, unknown>>(header);
+  if (!candidate) return undefined;
   const strings = ["accountId", "poolId", "transaction", "signature"] as const;
   for (const field of strings) {
     if (typeof candidate[field] !== "string" || candidate[field] === "") return undefined;

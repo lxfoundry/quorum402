@@ -83,8 +83,8 @@ interface Stubs {
   coordinatorBalance?: bigint;
   /** The deposit the contract reports at the index the log gave. */
   deposit?: Deposit;
-  /** What the index resolves a transaction id to. `undefined` means "not indexed". */
-  indexedDepositId?: bigint | undefined;
+  /** Run as though the index has not reached the payment yet. */
+  notIndexed?: boolean;
   /** Run with no index at all, as a deployment with `SUBGRAPH_URL` unset does. */
   noIndex?: boolean;
   /** An index that is wired but unreachable, as distinct from one that is behind. */
@@ -99,7 +99,7 @@ interface Stubs {
   accountOf?: ServerDeps["accountOf"];
 }
 
-function deps(stubs: Stubs = {}): ServerDeps & { logged: string[] } {
+function deps(stubs: Stubs = {}): ServerDeps & { logged: string[]; reads: string[] } {
   const pool = stubs.pool ?? terms();
   const readBack = stubs.after ?? pool;
   const logged: string[] = [];
@@ -107,16 +107,26 @@ function deps(stubs: Stubs = {}): ServerDeps & { logged: string[] } {
   // stub has to put the pool under its own id rather than answering with it for every id.
   // Redemption looks a pool up *by the id in the receipt*, and a stub that ignores the id
   // would make that lookup untestable.
+  const reads: string[] = [];
   const reader: PoolReader = {
-    poolCount: async () => pool.poolId + 1n,
-    poolOf: async (poolId) =>
-      poolId === pool.poolId
+    poolCount: async () => {
+      reads.push("poolCount");
+      return pool.poolId + 1n;
+    },
+    poolOf: async (poolId) => {
+      reads.push("poolOf");
+      return poolId === pool.poolId
         ? pool
-        : terms({ poolId, resourceUrl: `${BASE}/benchmark/unrelated-${poolId}` }),
-    statusOf: async () => stubs.state ?? "Open",
+        : terms({ poolId, resourceUrl: `${BASE}/benchmark/unrelated-${poolId}` });
+    },
+    statusOf: async () => {
+      reads.push("statusOf");
+      return stubs.state ?? "Open";
+    },
   };
   return {
     logged,
+    reads,
     registry: new PoolRegistry(reader),
     pools: {
       poolOf: async () => readBack,
@@ -163,13 +173,10 @@ function deps(stubs: Stubs = {}): ServerDeps & { logged: string[] } {
             if (stubs.indexThrows) {
               throw new Error("subgraph error: Store error: database unavailable at 10.0.0.4");
             }
-            const depositId =
-              "indexedDepositId" in stubs ? stubs.indexedDepositId : 0n;
-            return depositId === undefined
-              ? undefined
-              : { depositId, payerAddress: BUYER_EVM, counted: true };
+            return stubs.notIndexed
+              ? { indexedBlock: 4_242n }
+              : { depositId: 0n, indexedBlock: 4_242n };
           },
-          indexedBlock: async () => 4_242n,
           isRecorded: async () => {
             if (stubs.isRecordedThrows) throw new Error("subgraph returned 502");
             return stubs.alreadyRecorded ?? false;
@@ -541,6 +548,19 @@ describe("§6 lifecycle", () => {
     assert.equal(res.status, 401);
   });
 
+  it("refuses an out-of-date receipt without reading the chain at all", async () => {
+    // §8 rule 1 is the only check that needs no network, and it is the cheapest request anyone
+    // can send. Running it after the pool reads would charge three paid contract queries to
+    // answer a receipt whose own clock already refuses it.
+    const d = deps();
+    const res = await request(d, `/benchmark/${SLUG}`, {
+      [QUORUM_RECEIPT_HEADER]: receipt({ validUntil: Math.floor(Date.now() / 1000) - 600 }),
+    });
+
+    assert.equal(res.status, 401);
+    assert.deepEqual(d.reads, []);
+  });
+
   it("503s rather than 500s when the index cannot be reached", async () => {
     // A behind index and a down index are different answers. The first is 404 with the lag
     // reported; the second must not tell a seat holder their payment does not exist, and must
@@ -567,7 +587,7 @@ describe("§6 lifecycle", () => {
 
   it("404s a payment the index has not caught up with, and says how far it has got", async () => {
     // The ordinary case for a buyer redeeming seconds after the settlement that funded it.
-    const res = await request(deps({ indexedDepositId: undefined }), `/benchmark/${SLUG}`, {
+    const res = await request(deps({ notIndexed: true }), `/benchmark/${SLUG}`, {
       [QUORUM_RECEIPT_HEADER]: receipt(),
     });
 
