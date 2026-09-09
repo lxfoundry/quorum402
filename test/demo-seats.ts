@@ -109,27 +109,24 @@ describe("mergeSeats", () => {
     ...over,
   });
 
+  /**
+   * `mergeSeats` with the fixtures every case shares.
+   *
+   * The interesting half of each test is one or two arguments; spelling out the other four each
+   * time buried them.
+   */
+  const merge = (over: Partial<Parameters<typeof mergeSeats>[0]> = {}) =>
+    mergeSeats({ indexed: [], remembered: [], sells: SELLS, live: new Map(), now: NOW, ...over });
+
   it("collapses a just-paid seat and its indexed twin into one row", () => {
-    const rows = mergeSeats({
-      indexed: [deposit()],
-      remembered: [remembered()],
-      sells: SELLS,
-      live: new Map(),
-      now: NOW,
-    });
+    const rows = merge({ indexed: [deposit()], remembered: [remembered()] });
 
     assert.equal(rows.length, 1);
     assert.equal(rows[0]?.indexed, true);
   });
 
   it("shows a seat the index has not caught up with yet, unredeemable", () => {
-    const rows = mergeSeats({
-      indexed: [],
-      remembered: [remembered()],
-      sells: SELLS,
-      live: new Map(),
-      now: NOW,
-    });
+    const rows = merge({ remembered: [remembered()] });
 
     assert.equal(rows.length, 1);
     assert.equal(rows[0]?.seat, 2);
@@ -140,12 +137,8 @@ describe("mergeSeats", () => {
   it("hides seats in pools this coordinator does not sell", () => {
     // Earlier e2e runs leave real deposits against ephemeral ports. This server answers 401 for
     // those resources, so a Redeem button beside one would be a button that lies.
-    const rows = mergeSeats({
+    const rows = merge({
       indexed: [deposit({ pool: pool({ resourceUrl: "http://127.0.0.1:56311/benchmark/x" }) })],
-      remembered: [],
-      sells: SELLS,
-      live: new Map(),
-      now: NOW,
     });
 
     assert.deepEqual(rows, []);
@@ -153,12 +146,9 @@ describe("mergeSeats", () => {
 
   it("prefers what the chain says over what the index last wrote down", () => {
     // The index lags, and the lag it shows most is a pool that filled a moment ago.
-    const rows = mergeSeats({
+    const rows = merge({
       indexed: [deposit()],
-      remembered: [],
-      sells: SELLS,
       live: new Map([["7", { state: "Met" as const, seats: 3 }]]),
-      now: NOW,
     });
 
     assert.equal(rows[0]?.state, "Met");
@@ -167,13 +157,7 @@ describe("mergeSeats", () => {
   });
 
   it("applies lazy expiry to a pool the index still calls open", () => {
-    const rows = mergeSeats({
-      indexed: [deposit({ pool: pool({ deadline: NOW - 5 }) })],
-      remembered: [],
-      sells: SELLS,
-      live: new Map(),
-      now: NOW,
-    });
+    const rows = merge({ indexed: [deposit({ pool: pool({ deadline: NOW - 5 }) })] });
 
     assert.equal(rows[0]?.storedState, "Open");
     assert.equal(rows[0]?.state, "Expired");
@@ -182,12 +166,9 @@ describe("mergeSeats", () => {
   });
 
   it("does not offer a refund twice", () => {
-    const rows = mergeSeats({
+    const rows = merge({
       indexed: [deposit({ refunded: true, pool: pool({ state: "Expired" }) })],
       remembered: [remembered({ pool: pool({ state: "Expired" }) })],
-      sells: SELLS,
-      live: new Map(),
-      now: NOW,
     });
 
     assert.equal(rows.length, 1);
@@ -196,13 +177,7 @@ describe("mergeSeats", () => {
   });
 
   it("reports a late deposit as holding no seat", () => {
-    const rows = mergeSeats({
-      indexed: [deposit({ counted: false, seatsAfter: 3 })],
-      remembered: [],
-      sells: SELLS,
-      live: new Map(),
-      now: NOW,
-    });
+    const rows = merge({ indexed: [deposit({ counted: false, seatsAfter: 3 })] });
 
     // `seatsAfter` on a late deposit is the pool's count unchanged, which is not a seat number.
     assert.equal(rows[0]?.seat, null);
@@ -210,15 +185,11 @@ describe("mergeSeats", () => {
   });
 
   it("puts the newest pool first", () => {
-    const rows = mergeSeats({
+    const rows = merge({
       indexed: [
         deposit({ pool: pool({ poolId: "7" }) }),
         deposit({ transaction: "0.0.2@2.2", pool: pool({ poolId: "11" }) }),
       ],
-      remembered: [],
-      sells: SELLS,
-      live: new Map(),
-      now: NOW,
     });
 
     assert.deepEqual(
