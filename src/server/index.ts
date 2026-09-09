@@ -91,7 +91,22 @@ export function createApp(deps: ServerDeps): Express {
   });
 
   app.get("/benchmark/:slug", (req, res) => {
-    void handle(deps, req, res);
+    // Express 4 does not catch a rejection from an async handler. Unhandled, it leaves the
+    // payer waiting on a response that never comes and takes the process down with it - so
+    // every request in flight pays for one request's bad luck. A 500 is a worse answer than
+    // the one `handle` meant to send, and a better one than none.
+    handle(deps, req, res).catch((error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(`GET ${req.originalUrl} failed: ${detail}`);
+      // Past settlement `handle` has already set PAYMENT-RESPONSE, and sending it with the
+      // 500 is deliberate: it carries the transaction id, which is the payer's evidence that
+      // their money moved even though the receipt did not survive being built.
+      if (res.headersSent) {
+        res.end();
+        return;
+      }
+      res.status(500).json({ error: "the coordinator could not serve this request", detail });
+    });
   });
 
   return app;

@@ -315,6 +315,27 @@ describe("§6 lifecycle", () => {
     assert.equal(res.status, 501);
   });
 
+  it("answers 500 rather than hanging when something under the route throws", async () => {
+    // `handle` is async and the route cannot let it reject unheard: an unhandled rejection
+    // leaves this fetch waiting on a socket nobody will ever write to, with the process on
+    // its way down behind it. The facilitator is the first network call on the path, so it
+    // is the likeliest thing to fail this way.
+    const base = deps();
+    const d: ServerDeps = {
+      ...base,
+      facilitator: {
+        ...base.facilitator,
+        feePayerFor: async () => {
+          throw new Error("facilitator unreachable");
+        },
+      },
+    };
+    const res = await request(d, `/benchmark/${SLUG}`);
+
+    assert.equal(res.status, 500);
+    assert.match(String(res.body.detail), /facilitator unreachable/);
+  });
+
   it("lists what is for sale", async () => {
     const res = await request(deps(), "/");
     const benchmarks = res.body.benchmarks as { url: string }[];
