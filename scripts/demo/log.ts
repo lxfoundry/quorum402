@@ -25,10 +25,16 @@ export interface LogEntry {
   text: string;
 }
 
+/**
+ * How many lines the page shows, and therefore how many are worth keeping.
+ *
+ * One number rather than two: a buffer that held more than the only reader ever asks for would
+ * retain lines that can never be displayed, and invite the question which bound governs.
+ */
+const KEEP = 12;
+
 export class ProtocolLog {
   private readonly entries: LogEntry[] = [];
-
-  constructor(private readonly keep = 20) {}
 
   /** A request this demo made on a wallet's behalf. */
   request(wallet: string, text: string): void {
@@ -52,12 +58,12 @@ export class ProtocolLog {
   }
 
   /** Newest last, so the page reads downward like a terminal. */
-  tail(count = 12): LogEntry[] {
-    return this.entries.slice(-count);
+  tail(): LogEntry[] {
+    return [...this.entries];
   }
 
   private push(entry: Omit<LogEntry, "at">): void {
     this.entries.push({ at: Date.now(), ...entry });
-    if (this.entries.length > this.keep) this.entries.splice(0, this.entries.length - this.keep);
+    if (this.entries.length > KEEP) this.entries.splice(0, this.entries.length - KEEP);
   }
 }

@@ -257,11 +257,7 @@ async function seatsFor(
 
 /** Explorer links, added last so nothing above has to carry a network around. */
 function withLinks(network: string, seat: SeatRow) {
-  return {
-    ...seat,
-    seatHbar: tinybarsToHbar(BigInt(seat.unitTinybars)),
-    transactionUrl: hashscanTransaction(network, seat.transaction),
-  };
+  return { ...seat, transactionUrl: hashscanTransaction(network, seat.transaction) };
 }
 
 // -------------------------------------------------------------------------------------- actions
