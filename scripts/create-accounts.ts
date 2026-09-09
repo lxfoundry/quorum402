@@ -7,7 +7,8 @@
  * Writes .accounts.json, which holds PRIVATE KEYS and is gitignored. This repository is
  * public; that file must never appear in a commit.
  *
- * Run: npm run accounts:create -- [count] [hbarEach]
+ * Run: npm run accounts:create -- [count] [hbarEach]     # first time, writes the file
+ *      npm run accounts:create -- --add <label> [hbarEach]  # append one, keeping the rest
  */
 import { writeFileSync, existsSync } from "node:fs";
 import {
@@ -18,6 +19,7 @@ import {
   PrivateKey,
 } from "@hiero-ledger/sdk";
 import { loadConfig } from "../src/config.js";
+import { loadAccounts } from "./accounts.js";
 
 const OUT = ".accounts.json";
 
@@ -42,37 +44,87 @@ export interface GeneratedAccount {
   evmAddress: string;
 }
 
-async function main(): Promise<void> {
-  const count = Number(process.argv[2] ?? 3);
-  const hbarEach = Number(process.argv[3] ?? 20);
+interface Args {
+  /** Append one account under this label, keeping everything already in the file. */
+  add?: string;
+  count: number;
+  hbarEach: number;
+}
 
-  if (!Number.isInteger(count) || count < 1 || count > 10) {
-    throw new Error(`count must be an integer 1-10, got "${process.argv[2]}"`);
+function parseArgs(argv: string[]): Args {
+  const add = argv.includes("--add") ? argv[argv.indexOf("--add") + 1] : undefined;
+  if (argv.includes("--add") && (!add || add.startsWith("--"))) {
+    throw new Error("--add needs a label, e.g. --add seller");
+  }
+  // Positionals keep their meaning either side of the flag: `--add seller 5` funds with 5.
+  const positional = argv.filter((a, i) => {
+    if (a.startsWith("--")) return false;
+    return argv[i - 1] !== "--add";
+  });
+  // An extra positional is a mis-invocation, not something to drop: `--add seller 5 extra`
+  // and `3 20 extra` both parse as valid today, and the second funds real testnet accounts
+  // from a command whose author clearly meant something else.
+  const expected = add ? 1 : 2;
+  if (positional.length > expected) {
+    throw new Error(
+      add
+        ? `--add <label> takes at most one more argument, [hbarEach]. Got: ${positional.join(" ")}`
+        : `expected at most [count] [hbarEach]. Got: ${positional.join(" ")}`,
+    );
+  }
+  const [first, second] = add ? [undefined, positional[0]] : positional;
+
+  const count = Number(first ?? 3);
+  const hbarEach = Number(second ?? 20);
+  if (!add && (!Number.isInteger(count) || count < 1 || count > 10)) {
+    throw new Error(`count must be an integer 1-10, got "${first}"`);
   }
   if (!Number.isFinite(hbarEach) || hbarEach <= 0) {
-    throw new Error(`hbarEach must be positive, got "${process.argv[3]}"`);
+    throw new Error(`hbarEach must be positive, got "${second}"`);
   }
+  return { add, count, hbarEach };
+}
 
-  if (existsSync(OUT) && !process.argv.includes("--force")) {
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+  const cfg = loadConfig();
+
+  // Appending reads the file first, so the accounts already in it survive. Overwriting is
+  // what the guard below exists to prevent: those accounts hold testnet funds, and losing
+  // their keys strands the balance with no way back.
+  const existing = args.add ? loadAccounts(cfg.network) : [];
+  if (args.add && existing.some((a) => a.label === args.add)) {
+    throw new Error(
+      `${OUT} already has an account labelled "${args.add}": ${
+        existing.find((a) => a.label === args.add)?.accountId
+      }`,
+    );
+  }
+  if (!args.add && existsSync(OUT) && !process.argv.includes("--force")) {
     throw new Error(
       `${OUT} already exists. Creating accounts again would orphan the funds in the old ones.\n` +
-        `Pass --force if that is what you want.`,
+        `To add one without touching the others: npm run accounts:create -- --add <label>\n` +
+        `Pass --force to replace the file anyway.`,
     );
   }
 
-  const cfg = loadConfig();
+  const labels = args.add
+    ? [args.add]
+    : Array.from({ length: args.count }, (_, i) => `buyer${i + 1}`);
+
   const client = cfg.network === "testnet" ? Client.forTestnet() : Client.forMainnet();
   client.setOperator(
     AccountId.fromString(cfg.operatorId),
     PrivateKey.fromStringECDSA(cfg.operatorKey),
   );
 
-  console.log(`\nCreating ${count} account(s) with ${hbarEach} HBAR each on ${cfg.network}\n`);
+  console.log(
+    `\nCreating ${labels.length} account(s) with ${args.hbarEach} HBAR each on ${cfg.network}\n`,
+  );
 
-  const accounts: GeneratedAccount[] = [];
+  const created: GeneratedAccount[] = [];
   try {
-    for (let i = 0; i < count; i++) {
-      const label = `buyer${i + 1}`;
+    for (const label of labels) {
       const key = PrivateKey.generateECDSA();
 
       const receipt = await (
@@ -80,7 +132,7 @@ async function main(): Promise<void> {
           // No EVM alias, so the account's address is the long-zero form of its number. That
           // is what `evmAddress` records and what these accounts sign contract calls as.
           .setKeyWithoutAlias(key.publicKey)
-          .setInitialBalance(new Hbar(hbarEach))
+          .setInitialBalance(new Hbar(args.hbarEach))
           // Unlimited auto-association: lets these accounts receive HTS tokens without an
           // explicit association step, which is what makes a USDC path viable later.
           .setMaxAutomaticTokenAssociations(-1)
@@ -90,7 +142,7 @@ async function main(): Promise<void> {
       const accountId = receipt.accountId;
       if (!accountId) throw new Error(`account creation for ${label} returned no accountId`);
 
-      accounts.push({
+      created.push({
         label,
         accountId: accountId.toString(),
         privateKey: key.toStringRaw(),
@@ -101,17 +153,16 @@ async function main(): Promise<void> {
   } finally {
     // Persist whatever was created even if a later one failed - these accounts hold real
     // testnet funds, and losing their keys strands that balance.
-    if (accounts.length) {
+    if (created.length) {
+      const accounts = [...existing, ...created];
       writeFileSync(OUT, JSON.stringify({ network: cfg.network, accounts }, null, 2) + "\n");
-      console.log(`\nWrote ${accounts.length} account(s) to ${OUT} (gitignored - contains keys)`);
+      console.log(
+        `\nWrote ${created.length} new account(s), ${accounts.length} in total, to ${OUT}` +
+          ` (gitignored - contains keys)`,
+      );
     }
     client.close();
   }
-
-  console.log(
-    `\nSet PAY_TO_ID in .env to the account that should receive payment.\n` +
-      `For the first single payment, any account other than the payer will do.\n`,
-  );
 }
 
 main().catch((err) => {

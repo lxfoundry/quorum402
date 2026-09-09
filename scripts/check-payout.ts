@@ -24,6 +24,7 @@ import { AccountId, Client, ContractId, PrivateKey } from "@hiero-ledger/sdk";
 import { caip2, loadConfig } from "../src/config.js";
 import { PoolsClient } from "../src/pool/client.js";
 import { readDeployment } from "../src/pool/deployment.js";
+import { awaitBalance, balanceTinybars, evmAddressOf } from "../src/hedera/mirror.js";
 import { Facilitator } from "../src/x402/facilitator.js";
 import {
   HBAR_ASSET,
@@ -72,40 +73,6 @@ function parseArgs(argv: string[]): Args {
     }
   }
   return args;
-}
-
-/**
- * The EVM address the *network* holds for an account, not the one derivable from its key.
- *
- * These differ, and the difference strands money. `accounts:create` makes accounts with
- * `setKeyWithoutAlias`, so their on-chain address is the long-zero form of the account
- * number; paying the key-derived address instead would create a fresh hollow account and
- * credit that one.
- */
-async function evmAddressOf(mirrorUrl: string, accountId: string): Promise<string> {
-  const res = await fetch(`${mirrorUrl}/api/v1/accounts/${accountId}?limit=1`);
-  if (!res.ok) throw new Error(`mirror node returned ${res.status} for account ${accountId}`);
-  const body = (await res.json()) as { evm_address?: string };
-  if (!body.evm_address) throw new Error(`mirror node has no evm address for ${accountId}`);
-  return body.evm_address;
-}
-
-async function balanceTinybars(mirrorUrl: string, id: string): Promise<bigint> {
-  const res = await fetch(`${mirrorUrl}/api/v1/accounts/${id}?limit=1`);
-  if (!res.ok) throw new Error(`mirror node returned ${res.status} for ${id}`);
-  const body = (await res.json()) as { balance?: { balance?: number } };
-  return BigInt(body.balance?.balance ?? 0);
-}
-
-/** Mirror ingestion lags consensus. Poll for the balance expected rather than sleeping once. */
-async function awaitBalance(mirrorUrl: string, id: string, expected: bigint): Promise<bigint> {
-  let last = 0n;
-  for (let attempt = 1; attempt <= 12; attempt++) {
-    last = await balanceTinybars(mirrorUrl, id);
-    if (last === expected) return last;
-    await new Promise((r) => setTimeout(r, 1500));
-  }
-  return last;
 }
 
 async function main(): Promise<number> {

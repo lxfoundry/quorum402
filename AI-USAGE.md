@@ -47,6 +47,8 @@ was rejected.
 | 2026-09-08 | The subgraph (`subgraph/`) | Read both sides of the hosting question - The Graph's supported-networks list and Hedera's own docs - then wrote the schema, the mappings and the graph-node configuration, and ran it against testnet until it returned the real pools | Set the question the mappings had to answer: what does the contract deliberately not keep. Rejected the first schema for calling the account entity `Payer`, which is wrong for a recipient credited by a failed payout |
 | 2026-09-08 | Hosting on Fly.io (`subgraph/fly/`) | Diagnosed the IPv4/IPv6 split and the Postgres collation and memory failures, and wrote the deployment configs and the split deploy path | Chose to self-host publicly rather than leave the index on a laptop, and refused the shortcut of publishing graph-node's unauthenticated admin port to make deployment easier |
 | 2026-09-08 | `specs/quorum-scheme.md` and ADR 0005 | Read the x402 v2 specification, its HTTP transport and the `exact` scheme documents, then drafted the scheme spec and the decision record against them | Set the design in a question-by-question session before a line was written: that a legacy `exact` client must still be able to pay, that entitlement is derived from chain state rather than held in a session, that pools are opened by the seller and never by the server, and that the scheme nests its hold binding rather than referencing it |
+| 2026-09-08 | ADR 0006 and the coordinator's payment leg (`src/server/`) | Found that the solvency guard's arithmetic cancels, so every `recordDeposit` precondition can be checked before the irreversible step; wrote the pool registry, the requirement builders, the payer derivation and the preflight gate, with tests at each boundary | Set the rule the design had to satisfy — that every condition for recording must hold *before* settle is relayed — and rejected the first design's post-settlement balance polling. Chose an HCS topic over a private failure store, on the grounds that the coordinator's own failures should not be the only events nobody else can audit |
+| 2026-09-08 | The coordinator over HTTP (`src/server/index.ts`, `src/buyer/agent.ts`) | Wrote the §6 lifecycle, the receipt, the buyer that answers a 402 on its own, and tests driving every status-table row over a real listening server with the chain stubbed | Approved the testnet spend and set its bound. Called for a seller account distinct from the coordinator, which ADR 0003 assumes and a pool paying its own coordinator would not have shown |
 
 ## 4. What was done without AI
 
@@ -216,6 +218,52 @@ decision never recognised as one. There was no source to fetch, because neither 
 anyone had thought to ask — so both surfaced as a live deployment failing, and both times the
 error named a symptom rather than the cause. Reading cures the first shape. The second is only
 cured by treating a deployment as somewhere choices get made rather than defaults accepted.
+
+**2026-09-08 — designed a wait for a latency that was not in the path.** The first plan for
+recording a settled payment blocked on the mirror node until the contract's balance reflected
+the transfer, then called `recordDeposit`. That was built on an assumption rather than a
+reading: `PoolsClient` goes through `ContractCallQuery` and `ContractExecuteTransaction`, which
+are consensus-node operations against current state, so nothing in the recording path consults
+the mirror node at all. The polling in `check-payout.ts` is a *verification* that the network
+agrees the money moved, and it had been mistaken for a precondition because it sits between the
+two calls in that script. The correction came from a human asking why the check was not simply
+done before settling, and the answer turned out to be that it could be — see ADR 0006, where
+the solvency guard's arithmetic cancels. A design that paces itself against an API nothing in
+the path queries is slower for no reason and degrades worst exactly when it is needed most.
+
+**2026-09-08 — a test suite that passed and hung.** Every assertion in `payer-derivation.ts`
+passed in 86ms, and the file was reported as failing after 90 seconds. `Client.forTestnet()`
+opens network channels when it is constructed, and nothing there submits anything, so the
+channels were never closed and the runner had no way to exit. The output said `pass 7` and
+`fail 1` about the same file at once. Worth recording because the two halves of that are read
+by different parts of the eye: the ticks look like success, and the thing that actually failed
+was infrastructure the tests never mentioned.
+
+**2026-09-08 — the SDK would have decoded a pool wrongly and not said so.** `poolOf` returns a
+struct containing a `string`, so the return data is a tuple holding a dynamic tuple. Read with
+the SDK's positional getters — the obvious approach, and the one used everywhere else in that
+client — every word sits one offset further along than its index suggests, and `getString`
+resolves its offset against the wrong base. It does not throw. It hands back a plausible pool
+with the fields shifted, which would have been read as terms and used to price a 402. A runtime
+dependency on viem was the cheaper side of that trade.
+
+**2026-09-08 — feature work committed onto a branch that was already a pull request.** The ADR
+branch had been pushed and opened as a PR; the next commit went on top of it rather than onto a
+new branch, which would have put unrelated server code inside a decision record's review. It
+was caught before pushing, so the fix needed no history rewriting — but the reason it was
+available is luck of timing, not process. Branching is the step that is easiest to skip when
+the work feels continuous, and it is exactly then that it matters.
+
+**2026-09-08 — wrote the mirror-lag mistake into a script hours after writing the ADR against
+it.** ADR 0006 says, at length, that mirror ingestion lags consensus and that the recording path
+must not pace itself against it. The release script written the same evening then read the
+contract's balance from the mirror node immediately after the payout and printed
+`300000000 -> 300000000` — the pre-transfer figure, which reads exactly like a payout that did
+not happen. The money had moved; five seconds later the same query showed the contract at zero
+and the seller up by three HBAR. `check-payout.ts` had already solved this with a polling helper,
+which the new script did not use because nothing pointed at it. Knowing a fact well enough to
+write it down twice is not the same as applying it, and the failure mode of that gap is a script
+that reports the opposite of what happened.
 
 **2026-09-09 — wrote an address down, never asked the network for it, and left it beside the
 keys.** `create-accounts.ts` recorded each buyer's `evmAddress` as `key.publicKey.toEvmAddress()`

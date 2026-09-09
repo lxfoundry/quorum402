@@ -7,6 +7,16 @@ export interface Config {
   mirrorUrl: string;
   facilitatorUrl: string;
   port: number;
+  /**
+   * The origin this server is reachable at, without a trailing slash.
+   *
+   * Load-bearing, and in a way that is easy to miss: a pool stores its `resourceUrl` on-chain
+   * at creation, and the coordinator finds the pool for a request by matching that string. So
+   * the URL baked into the pool has to be one this server actually answers on. Get it wrong
+   * and every request 404s while the pool sits open and payable - the two halves fail apart,
+   * and neither says why.
+   */
+  publicBaseUrl: string;
   payToId: string | undefined;
 }
 
@@ -49,14 +59,29 @@ export function loadConfig(): Config {
   );
   if (missing.length) throw new MissingConfig(missing);
 
+  const port = Number(process.env.PORT?.trim() || 4021);
+
   return {
     ...networkConfig(),
     operatorId: required("HEDERA_OPERATOR_ID"),
     operatorKey: required("HEDERA_OPERATOR_KEY"),
     facilitatorUrl: process.env.X402_FACILITATOR_URL?.trim() || "https://api.testnet.blocky402.com",
-    port: Number(process.env.PORT?.trim() || 4021),
+    port,
+    publicBaseUrl: normaliseBaseUrl(
+      process.env.PUBLIC_BASE_URL?.trim() || `http://localhost:${port}`,
+    ),
     payToId: process.env.PAY_TO_ID?.trim() || undefined,
   };
+}
+
+/**
+ * Strip trailing slashes, so a base URL joins the same way however it was written.
+ *
+ * `resourceUrl` is compared as an exact string against what the chain holds, and a stray
+ * slash makes two spellings of one URL that never match.
+ */
+export function normaliseBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, "");
 }
 
 /** CAIP-2 id for the configured network, as x402 expects it. */
