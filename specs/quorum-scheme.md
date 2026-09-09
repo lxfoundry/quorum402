@@ -288,11 +288,16 @@ seat would be a lie the payer discovers only when redemption fails.
 One buyer taking one seat. The refusals are drawn where they actually happen, because *where* is
 the whole design: every one of them is on the left of the `/settle` line.
 
+`RS->>RS` is a decision over facts already in hand rather than a fresh read — the pool's terms and
+state are fetched once per request and carried, so §7.2's check and the pre-flight's are the same
+two numbers examined twice, not two round trips.
+
 ```mermaid
 sequenceDiagram
     actor B as Buyer
     participant RS as Resource server<br/>(coordinator)
     participant M as Mirror node
+    participant G as Subgraph
     participant F as Facilitator
     participant H as Hedera
     participant P as Pool contract
@@ -309,13 +314,19 @@ sequenceDiagram
 
     rect rgba(120, 160, 255, 0.12)
         Note over RS,P: everything that can refuse runs here — the payer still has their money
+        RS->>P: poolCount, poolOf, statusOf — read once, carried through
         RS->>F: GET /supported — re-read per request, so a rotated fee payer is caught
         RS->>RS: payload matches an advertised entry (§7.1) → 400
-        RS->>P: statusOf — pool closed since the 402 (§7.2) → 402
+        RS->>RS: pool closed since the 402 (§7.2) → 402
         RS->>RS: transfer debits one account, pays this contract → 400
-        RS->>M: evm address of the paying account (§7.5) → 402
-        RS->>P: committedTinybars, balanceTinybars
-        Note over RS,P: ADR 0006 pre-flight: solvency, coordinator funding,<br/>replay — every recordDeposit precondition → 402
+        RS->>M: key and evm address of the paying account (§7.5) → 402
+        Note over RS,M: no key that can sign → 402, before the money moves:<br/>that account could never redeem the seat (§11)
+        RS->>RS: this is a pool this coordinator runs → 402
+        RS->>P: committedTinybars, balanceTinybars → 402
+        RS->>M: coordinator's own balance → 402
+        RS->>G: has this transaction been attributed already?
+        Note over RS,G: → 402 on a definite yes only. The index lags, so it<br/>cannot prove a payment is new, and one that cannot<br/>answer must not refuse a payment that is otherwise good
+        Note over RS,P: ADR 0006 pre-flight — every recordDeposit precondition
     end
 
     RS->>F: POST /verify — binding payload only (§7.3)

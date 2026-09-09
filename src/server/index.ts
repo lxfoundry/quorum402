@@ -81,7 +81,7 @@ export interface ServerDeps {
    * consensus state cannot answer. Optional: without it the coordinator still sells seats and
    * settles payments, and only redemption is unavailable.
    */
-  index?: Pick<GraphClient, "depositFor" | "indexedBlock">;
+  index?: Pick<GraphClient, "depositFor" | "indexedBlock" | "isRecorded">;
   /** Retry knobs, so a test does not wait out the backoff. */
   record?: { sleep?: (ms: number) => Promise<void>; attempts?: number; retryMs?: number };
 }
@@ -229,12 +229,24 @@ async function handle(deps: ServerDeps, req: Request, res: Response): Promise<vo
     return;
   }
 
+  const index = deps.index;
   const gate = await preflight(
     {
       contract: deps.pools,
       coordinatorAccountId: deps.coordinatorAccountId,
       coordinatorAddress: deps.coordinatorAddress,
       coordinatorBalanceTinybars: deps.coordinatorBalanceTinybars,
+      // ADR 0006's replay check, and the one precondition only an index can answer: the
+      // contract hashes settled transaction ids into a private set and exposes no getter.
+      //
+      // Deliberately the softest gate here. The index lags, so a `false` is never proof that a
+      // payment is new - the contract's own guard remains the authority, and this only catches
+      // a duplicate early enough to save the payer a settlement. An index that cannot answer
+      // must therefore not refuse a payment that is otherwise good, so a failure reads as no
+      // opinion rather than as a refusal.
+      isAlreadyRecorded: index
+        ? (hederaTxId: string) => index.isRecorded(hederaTxId).catch(() => false)
+        : undefined,
     },
     { availability: selling, hederaTxId: transfer.transfer.transactionId },
   );

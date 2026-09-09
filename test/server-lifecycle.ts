@@ -91,6 +91,10 @@ interface Stubs {
   indexThrows?: boolean;
   /** The contract read that answers for the row the index pointed at, failing. */
   depositAtThrows?: boolean;
+  /** What the index says about a transaction having been attributed already. */
+  alreadyRecorded?: boolean;
+  /** The replay check itself failing, as distinct from answering `false`. */
+  isRecordedThrows?: boolean;
   /** The ledger's answer about an account. Throws for a key that cannot sign. */
   accountOf?: ServerDeps["accountOf"];
 }
@@ -166,6 +170,10 @@ function deps(stubs: Stubs = {}): ServerDeps & { logged: string[] } {
               : { depositId, payerAddress: BUYER_EVM, counted: true };
           },
           indexedBlock: async () => 4_242n,
+          isRecorded: async () => {
+            if (stubs.isRecordedThrows) throw new Error("subgraph returned 502");
+            return stubs.alreadyRecorded ?? false;
+          },
         },
     record: { sleep: async () => {}, attempts: 2 },
   };
@@ -337,6 +345,39 @@ describe("§6 lifecycle", () => {
     assert.equal(res.status, 402);
     assert.match(String(res.body.error), /redeemable seat/);
     assert.equal(settled, false);
+  });
+
+  it("402s a settlement the index says was already attributed, without settling", async () => {
+    // ADR 0006's replay check, which needs the log: the contract keeps its hash set private.
+    let settled = false;
+    const d = deps({ alreadyRecorded: true });
+    d.facilitator.settle = async () => {
+      settled = true;
+      return { success: true };
+    };
+
+    const res = await request(d, `/benchmark/${SLUG}`, { [PAYMENT_SIGNATURE_HEADER]: await payment() });
+
+    assert.equal(res.status, 402);
+    assert.equal(res.body.reason, "duplicate-transaction");
+    assert.equal(settled, false);
+  });
+
+  it("settles anyway when the replay check cannot be made", async () => {
+    // The softest gate here, and the only one whose failure must not refuse: the index lags, so
+    // it can never prove a payment is new. An outage that blocked good payments would trade a
+    // guard the contract already enforces for the thing this scheme exists to do.
+    let settled = false;
+    const d = deps({ isRecordedThrows: true, after: terms({ seats: 2 }) });
+    d.facilitator.settle = async () => {
+      settled = true;
+      return { success: true, transactionId: "0.0.1@2.0" };
+    };
+
+    const res = await request(d, `/benchmark/${SLUG}`, { [PAYMENT_SIGNATURE_HEADER]: await payment() });
+
+    assert.equal(settled, true);
+    assert.equal(res.status, 202);
   });
 
   it("402s with PAYMENT-RESPONSE when the facilitator declines", async () => {
