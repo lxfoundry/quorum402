@@ -167,8 +167,14 @@ TODO — video link.
 
 ```
 contracts/    the pool contract that holds a pool's funds, and its test support
-src/          the x402 wire types, the Hedera `exact` payment path, the deployment record
-scripts/      deployment, and checks against Hedera testnet that anyone can re-run
+src/
+  x402/       the wire types, the Hedera `exact` payment path, the facilitator client
+  pool/       the contract client, and the deployment record
+  hedera/     the mirror node: an account's network address, and its balance
+  server/     the coordinator - what a 402 offers, what it checks before settling, what it records
+  buyer/      a buyer that answers a quorum 402 with no human in the loop
+  benchmark/  the resource being sold, and why one buyer cannot buy it alone
+scripts/      deployment, the demo, and checks against Hedera testnet that anyone can re-run
 deployments/  what is deployed where, and the hash that proves it is this code
 subgraph/     the subgraph, and the graph-node that has to run it - see subgraph/README.md
 test/         contract tests, run on a local EVM pinned to Hedera's target

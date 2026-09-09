@@ -20,16 +20,21 @@
     "check:env": "tsx scripts/check-env.ts",
     "check:payto": "tsx scripts/check-contract-payto.ts",
     "deploy": "tsx scripts/deploy.ts",
+    "pool:open": "tsx scripts/open-pool.ts",
+    "pool:release": "tsx scripts/release-pool.ts",
     "check:deployment": "tsx scripts/check-deployment.ts",
     "check:payout": "tsx scripts/check-payout.ts",
+    "record": "tsx scripts/record-deposit.ts",
     "server": "tsx src/server/index.ts",
     "pay": "tsx scripts/pay-once.ts",
+    "buy": "tsx scripts/buy-seat.ts",
     "subgraph:config": "tsx scripts/subgraph-config.ts"
   },
   "dependencies": {
     "@hiero-ledger/sdk": "^2.85.0",
     "dotenv": "^16.4.5",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "viem": "^2.56.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
@@ -45,7 +50,6 @@
     "solhint": "^5.2.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "typescript-eslint": "^8.69.0",
-    "viem": "^2.56.3"
+    "typescript-eslint": "^8.69.0"
   }
 }

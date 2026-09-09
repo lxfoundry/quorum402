@@ -12,9 +12,19 @@ export const X402_VERSION = 2 as const;
 export type Network = `hedera:${"testnet" | "mainnet"}` | (string & {});
 
 /**
+ * When settlement happens relative to the resource running. §6.1 of the specification defines
+ * the first three; `conditional` is proposed by `specs/quorum-scheme.md` §2.
+ */
+export type PaymentFlow = "authorization" | "upfront" | "escrow" | "conditional";
+
+/**
  * What the resource server demands. On Hedera, `extra.feePayer` is required: it names the
  * account that pays network fees, which is the facilitator, and whose signature completes
  * the partially signed transaction.
+ *
+ * This is the **binding-level** shape, and deliberately the only one the facilitator ever
+ * sees - a facilitator serves `exact`, not `quorum` (`quorum-scheme.md` §7 rule 3). The
+ * `quorum` requirement that wraps it is `QuorumRequirements` below.
  */
 export interface PaymentRequirements {
   scheme: "exact";
@@ -29,7 +39,70 @@ export interface PaymentRequirements {
   /** Hedera account id receiving the funds. */
   payTo: string;
   maxTimeoutSeconds: number;
+  /**
+   * `paymentFlow` is optional here because a bare `exact` payment that is not fronting a
+   * quorum pool has nothing to declare - the Hedera binding defines no default, and the
+   * specification requires the field only once the resolved flow is not `authorization`.
+   * A server offering this entry as a quorum fallback MUST set it: `quorum-scheme.md` §5.
+   */
+  extra: { feePayer: string; paymentFlow?: PaymentFlow };
+}
+
+/**
+ * How one payer's funds are held between commitment and outcome. `quorum` names three
+ * bindings and builds one (`quorum-scheme.md` §10); this is the built one.
+ */
+export interface HoldBinding {
+  scheme: "exact";
   extra: { feePayer: string };
+}
+
+/**
+ * `PaymentRequirements` for the `quorum` scheme - `quorum-scheme.md` §3.
+ *
+ * `amount`, `asset`, `payTo` and `network` describe the payment itself and sit at this level
+ * rather than inside `extra.binding`; the binding inherits them.
+ */
+export interface QuorumRequirements {
+  scheme: "quorum";
+  network: Network;
+  /** **One seat**, not the pool total. What this payer pays. */
+  amount: string;
+  asset: string;
+  /** Where the hold lives. Under the `exact` binding, the pool contract's own account. */
+  payTo: string;
+  maxTimeoutSeconds: number;
+  extra: {
+    paymentFlow: "conditional";
+    /** A `uint256` on-chain, so a string - it is not safely a JSON number. */
+    poolId: string;
+    threshold: number;
+    /**
+     * Seats counted when this response was written. **Advisory, and stale by construction**
+     * (§3). A client MAY omit it when echoing the entry back, so it is optional here.
+     */
+    filled?: number;
+    /** Unix seconds. */
+    deadline: number;
+    binding: HoldBinding;
+  };
+}
+
+/** One entry of `PaymentRequired.accepts`. */
+export type AcceptsEntry = QuorumRequirements | PaymentRequirements;
+
+/**
+ * The `PAYMENT-REQUIRED` header's payload - what a 402 offers.
+ *
+ * `error` and `resource.description` carry the human-readable half, because
+ * `PaymentRequirements` has no field for it and a legacy client selecting the `exact`
+ * fallback has nowhere else to learn that the resource may never run (§5).
+ */
+export interface PaymentRequired {
+  x402Version: typeof X402_VERSION;
+  error: string;
+  resource: ResourceDescriptor;
+  accepts: AcceptsEntry[];
 }
 
 export interface ResourceDescriptor {
@@ -48,6 +121,30 @@ export interface PaymentPayload {
   resource: ResourceDescriptor;
   accepted: PaymentRequirements;
   payload: HederaExactPayload;
+}
+
+/**
+ * The `quorum` payload - `quorum-scheme.md` §4.
+ *
+ * `binding` is **the hold binding's own payload, verbatim**. A resource server unwraps it and
+ * hands it to the facilitator unchanged; nothing in the `quorum` layer rewrites, re-signs or
+ * re-encodes it. That is the structural claim of the scheme expressed in the format: swap the
+ * binding, and only this inner object changes.
+ */
+export interface QuorumPayloadBody {
+  poolId: string;
+  binding: HederaExactPayload;
+}
+
+export interface QuorumPaymentPayload {
+  x402Version: typeof X402_VERSION;
+  resource: ResourceDescriptor;
+  /**
+   * The client's echo of the entry it chose. **A statement, not evidence** - a server MUST
+   * validate it against what it actually advertised, and MUST ignore `extra.filled` (§4).
+   */
+  accepted: QuorumRequirements;
+  payload: QuorumPayloadBody;
 }
 
 export interface VerifyResponse {

@@ -101,10 +101,18 @@ reported:
   lost. It is a success, and the deposit is read back rather than re-recorded. Treating it as a
   failure would manufacture a permanent phantom in the failure log.
 
-Whether the retry is ever needed depends on something this project has not measured: whether the
-facilitator's `/settle` returns before or after its transaction reaches consensus. The retry costs
-nothing when the answer is "after", and is the difference between a working payment and a lost one
-when it is "before". It is not worth resolving by inspection when it can be covered.
+Whether the retry is ever needed depended on something this document could not answer when it was
+written: whether the facilitator's `/settle` returns before or after its transaction reaches
+consensus. The retry costs nothing when the answer is "after", and is the difference between a
+working payment and a lost one when it is "before", so it was written to cover both rather than
+resolved by inspection.
+
+**Measured on 2026-09-08 against Blocky402's hosted testnet facilitator: "after".** Three payments
+into pool `2` on Hedera testnet were each recorded on the first attempt, with no retry and no
+`Insolvent` revert; the contract's balance already included the payment by the time
+`recordDeposit` ran. So on this facilitator the retry is dormant insurance rather than a
+load-bearing step. It stays, because "the facilitator we happen to use returns after consensus" is
+not a property of the scheme, and a facilitator that returned earlier would be conformant.
 
 ### 4. A failure that survives all of that is recorded where a maintainer and a script can both find it
 
