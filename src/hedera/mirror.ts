@@ -19,9 +19,10 @@
  * be redeemed by the account that bought it.
  *
  * **Deliberately asks nothing about the account's key.** Every account has an address, including
- * the threshold-key and contract accounts `accountOf` refuses; whether one can *sign* is a
- * separate question with a separate answer, and conflating them here would make an address the
- * coordinator only needs in order to refund conditional on a capability only redemption needs.
+ * the threshold-key and contract accounts `accountOf` returns without one; whether an account can
+ * *sign* is a separate question with a separate answer, and conflating them here would make an
+ * address the coordinator only needs in order to refund conditional on a capability only
+ * redemption needs.
  */
 export async function evmAddressOf(mirrorUrl: string, accountId: string): Promise<string> {
   const body = await accountRecord(mirrorUrl, accountId);

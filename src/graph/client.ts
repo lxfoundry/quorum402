@@ -68,9 +68,10 @@ export class GraphClient {
   /**
    * Which deposit, if any, this transaction settled into this pool.
    *
-   * `undefined` means the index has no such row - either the payment never landed, or it has
-   * not been indexed yet. The two are not distinguishable from here and the caller must not
-   * treat either as proof that no payment was made.
+   * An absent `depositId` means the index has no such row - either the payment never landed, or
+   * it has not been indexed yet. The two are not distinguishable from here and the caller must
+   * not treat either as proof that no payment was made. A lookup that could not be made at all
+   * throws instead, because that is not an answer about the payment.
    */
   async depositFor(poolId: string, hederaTxId: string): Promise<DepositLookup> {
     // Filtered on both, not just the transaction id: the id is unique across the contract by
