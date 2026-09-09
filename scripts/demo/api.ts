@@ -533,7 +533,12 @@ class PoolStatusCache {
         state: availability.terms.state,
         seats: availability.terms.seats,
       };
-      const terminal = availability.state === "Released" || availability.state === "Expired";
+      // Terminal is judged on the **stored** state, not the lazily-resolved one. A pool past its
+      // deadline that nobody has stamped answers `Expired` from `statusOf` while its storage
+      // still says `Open`, and freezing it there would keep reporting it unstamped after a
+      // refund had stamped it. Once storage agrees, nothing can move it again.
+      const terminal =
+        availability.terms.state === "Released" || availability.terms.state === "Expired";
       this.liveById.set(poolId, { at: Date.now(), terminal, value });
       return value;
     } catch (error) {

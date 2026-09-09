@@ -172,8 +172,10 @@ function seatCard(seat) {
   card.append(facts);
 
   // Lazy expiry: worth showing rather than smoothing over. It is the one place the index and the
-  // chain legitimately disagree, and the demo is about being able to check things.
-  if (seat.state === "Expired" && seat.storedState === "Open") {
+  // chain legitimately disagree, and the demo is about being able to check things. Only while
+  // there is still something to claim - after a refund the pool has been stamped, and saying
+  // otherwise would describe the state one action ago.
+  if (seat.state === "Expired" && seat.storedState === "Open" && seat.action === "reclaim") {
     card.append(el("div", "note", "The deadline has passed. Nobody has stamped the pool yet — claiming refunds it and stamps it in one call."));
   }
 
