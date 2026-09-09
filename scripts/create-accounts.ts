@@ -25,6 +25,20 @@ export interface GeneratedAccount {
   label: string;
   accountId: string;
   privateKey: string;
+  /**
+   * The EVM address the *network* holds for this account - not the one its key derives.
+   *
+   * These accounts are created with `setKeyWithoutAlias` (below), so they carry no EVM alias
+   * and their address is the long-zero form of the account number, `0x00..0<num>`. The
+   * key-derived address exists as arithmetic and belongs to nothing: paying it would create a
+   * separate hollow account, and recording it as a deposit's payer would leave the refund
+   * unclaimable, because `claimRefund` matches `msg.sender` - which for a call from this
+   * account is the long-zero address.
+   *
+   * This field held the key-derived address until 2026-09-09. Nothing read it, so nothing
+   * broke; it was wrong on paper for two days and cost an afternoon of doubting the subgraph,
+   * which was reporting the correct address all along.
+   */
   evmAddress: string;
 }
 
@@ -63,6 +77,8 @@ async function main(): Promise<void> {
 
       const receipt = await (
         await new AccountCreateTransaction()
+          // No EVM alias, so the account's address is the long-zero form of its number. That
+          // is what `evmAddress` records and what these accounts sign contract calls as.
           .setKeyWithoutAlias(key.publicKey)
           .setInitialBalance(new Hbar(hbarEach))
           // Unlimited auto-association: lets these accounts receive HTS tokens without an
@@ -78,7 +94,7 @@ async function main(): Promise<void> {
         label,
         accountId: accountId.toString(),
         privateKey: key.toStringRaw(),
-        evmAddress: `0x${key.publicKey.toEvmAddress()}`,
+        evmAddress: `0x${accountId.toEvmAddress()}`,
       });
       console.log(`  ${label.padEnd(8)} ${accountId.toString()}`);
     }
