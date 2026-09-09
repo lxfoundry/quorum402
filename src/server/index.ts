@@ -67,8 +67,12 @@ export interface ServerDeps {
   publicBaseUrl: string;
   coordinatorAccountId: string;
   coordinatorAddress: string;
-  evmAddressOf: (accountId: string) => Promise<string>;
-  /** §8 step 2: the key a receipt is verified against, and the address it must match. */
+  /**
+   * §8 step 2: the key a receipt is verified against, and the address it must match.
+   *
+   * Also the payment path's address lookup, because it refuses an account that cannot sign -
+   * see the call site for why that refusal belongs before the money moves.
+   */
   accountOf: (accountId: string) => Promise<LedgerAccount>;
   coordinatorBalanceTinybars: () => Promise<bigint>;
   /**
@@ -207,12 +211,18 @@ async function handle(deps: ServerDeps, req: Request, res: Response): Promise<vo
 
   // §7 rule 5, run early because `recordDeposit` needs the address and a payer it cannot
   // resolve is a deposit it could not attribute (ADR 0006).
+  //
+  // `accountOf` rather than `evmAddressOf`, because it also requires a key that can sign, and
+  // refusing on that here is the point: a threshold-key, key-list or contract account can pay
+  // perfectly well and could never produce the §8 signature that redeems what it paid for.
+  // Letting the payment through would sell a seat nothing can open, and the payer would find
+  // out at redemption, having already parted with the money. §11 records the limitation.
   let payer: string;
   try {
-    payer = await deps.evmAddressOf(transfer.transfer.payerAccountId);
+    payer = (await deps.accountOf(transfer.transfer.payerAccountId)).evmAddress;
   } catch (error) {
     res.status(402).json({
-      error: "the paying account has no address this contract could refund",
+      error: "the paying account could not hold a redeemable seat",
       detail: error instanceof Error ? error.message : String(error),
     });
     return;
@@ -444,7 +454,6 @@ async function main(): Promise<void> {
     publicBaseUrl: cfg.publicBaseUrl,
     coordinatorAccountId: cfg.operatorId,
     coordinatorAddress,
-    evmAddressOf: (accountId) => evmAddressOf(cfg.mirrorUrl, accountId),
     accountOf: (accountId) => accountOf(cfg.mirrorUrl, accountId),
     coordinatorBalanceTinybars: () => balanceTinybars(cfg.mirrorUrl, cfg.operatorId),
     index: cfg.subgraphUrl ? new GraphClient({ url: cfg.subgraphUrl }) : undefined,

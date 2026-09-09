@@ -605,6 +605,12 @@ reasoning, and the evidence behind it, is [ADR 0001](adr/0001-what-quorum-binds-
   That payment is recorded, not counted, and refundable at once — correct, but it costs the payer a
   transaction fee and a round trip.
 - **A redemption proof is replayable inside its validity window** (§8).
+- **A seat can only be held by an account with one signing key.** Redemption is a signature by the
+  paying account's key (§8 rule 3), and `quorum` has nothing to say about m-of-n: a threshold key
+  or key list would need a rule for how many signatures a receipt carries, and a contract account
+  has no key to sign with at all. Such an account can pay perfectly well, which is the trap - so
+  the coordinator resolves the payer's key *before* settling and refuses with 402, rather than
+  taking the money for a seat nothing could ever open.
 - **A fallback payer is told about conditionality only in prose, and only at the response
   level**, because an `accepts[]` entry has no field to carry it (§5).
 - **This scheme is proposed, not adopted.** No facilitator serves `quorum`, and none needs to: the

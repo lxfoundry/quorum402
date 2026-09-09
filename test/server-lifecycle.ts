@@ -87,6 +87,8 @@ interface Stubs {
   indexedDepositId?: bigint | undefined;
   /** Run with no index at all, as a deployment with `SUBGRAPH_URL` unset does. */
   noIndex?: boolean;
+  /** The ledger's answer about an account. Throws for a key that cannot sign. */
+  accountOf?: ServerDeps["accountOf"];
 }
 
 function deps(stubs: Stubs = {}): ServerDeps & { logged: string[] } {
@@ -136,11 +138,12 @@ function deps(stubs: Stubs = {}): ServerDeps & { logged: string[] } {
     publicBaseUrl: BASE,
     coordinatorAccountId: "0.0.10404217",
     coordinatorAddress: COORDINATOR,
-    evmAddressOf: async () => BUYER_EVM,
-    accountOf: async () => ({
-      evmAddress: BUYER_EVM,
-      key: { type: "ECDSA_SECP256K1", hex: buyerKey.publicKey.toStringRaw() },
-    }),
+    accountOf:
+      stubs.accountOf ??
+      (async () => ({
+        evmAddress: BUYER_EVM,
+        key: { type: "ECDSA_SECP256K1", hex: buyerKey.publicKey.toStringRaw() },
+      })),
     coordinatorBalanceTinybars: async () => stubs.coordinatorBalance ?? 10_000_000_000n,
     index: stubs.noIndex
       ? undefined
@@ -301,6 +304,28 @@ describe("§6 lifecycle", () => {
 
     assert.equal(res.status, 402);
     assert.equal(res.body.reason, "coordinator-underfunded");
+    assert.equal(settled, false);
+  });
+
+  it("402s a payer whose key could never redeem the seat, without settling", async () => {
+    // §11. A threshold key can sign a transfer and cannot sign a §8 redemption message, so the
+    // seat this payment would buy could never be opened. Refusing costs the payer a round trip;
+    // settling would cost them the money.
+    let settled = false;
+    const d = deps({
+      accountOf: async () => {
+        throw new Error("account 0.0.1001 has key type ProtobufEncoded, which cannot sign");
+      },
+    });
+    d.facilitator.settle = async () => {
+      settled = true;
+      return { success: true };
+    };
+
+    const res = await request(d, `/benchmark/${SLUG}`, { [PAYMENT_SIGNATURE_HEADER]: await payment() });
+
+    assert.equal(res.status, 402);
+    assert.match(String(res.body.error), /redeemable seat/);
     assert.equal(settled, false);
   });
 

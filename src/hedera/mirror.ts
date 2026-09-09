@@ -17,9 +17,16 @@
  * `quorum-scheme.md` §8 turns this into a rule: the address recorded against a deposit must be
  * the one the network holds, at recording time and at redemption time alike, or a seat cannot
  * be redeemed by the account that bought it.
+ *
+ * **Deliberately asks nothing about the account's key.** Every account has an address, including
+ * the threshold-key and contract accounts `accountOf` refuses; whether one can *sign* is a
+ * separate question with a separate answer, and conflating them here would make an address the
+ * coordinator only needs in order to refund conditional on a capability only redemption needs.
  */
 export async function evmAddressOf(mirrorUrl: string, accountId: string): Promise<string> {
-  return (await accountOf(mirrorUrl, accountId)).evmAddress;
+  const body = await accountRecord(mirrorUrl, accountId);
+  if (!body.evm_address) throw new Error(`mirror node has no evm address for ${accountId}`);
+  return body.evm_address;
 }
 
 /** How an account's key is held. The two Hedera supports sign and verify identically here. */
@@ -45,12 +52,7 @@ export interface MirrorAccount {
  * have; a smart contract account has no key at all and cannot sign this message.
  */
 export async function accountOf(mirrorUrl: string, accountId: string): Promise<MirrorAccount> {
-  const res = await fetch(`${mirrorUrl}/api/v1/accounts/${accountId}?limit=1`);
-  if (!res.ok) throw new Error(`mirror node returned ${res.status} for account ${accountId}`);
-  const body = (await res.json()) as {
-    evm_address?: string;
-    key?: { _type?: string; key?: string } | null;
-  };
+  const body = await accountRecord(mirrorUrl, accountId);
   if (!body.evm_address) throw new Error(`mirror node has no evm address for ${accountId}`);
   const type = body.key?._type;
   if (type !== "ECDSA_SECP256K1" && type !== "ED25519") {
@@ -58,6 +60,16 @@ export async function accountOf(mirrorUrl: string, accountId: string): Promise<M
   }
   if (!body.key?.key) throw new Error(`mirror node has no public key for ${accountId}`);
   return { evmAddress: body.evm_address, key: { type, hex: body.key.key } };
+}
+
+/** One account record, read once. `evmAddressOf` and `accountOf` want different fields of it. */
+async function accountRecord(
+  mirrorUrl: string,
+  accountId: string,
+): Promise<{ evm_address?: string; key?: { _type?: string; key?: string } | null }> {
+  const res = await fetch(`${mirrorUrl}/api/v1/accounts/${accountId}?limit=1`);
+  if (!res.ok) throw new Error(`mirror node returned ${res.status} for account ${accountId}`);
+  return (await res.json()) as { evm_address?: string; key?: { _type?: string; key?: string } | null };
 }
 
 export async function balanceTinybars(mirrorUrl: string, id: string): Promise<bigint> {
