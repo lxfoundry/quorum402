@@ -48,6 +48,13 @@ export type RedemptionRefusal =
   | { reason: "not-your-deposit"; detail: string }
   /** No such payment in this pool, or the index has not caught up. 404 - see below. */
   | { reason: "no-such-deposit"; detail: string; indexedBlock?: bigint }
+  /**
+   * A read this decision needs could not be made. 503 - see below.
+   *
+   * `cause` is for the server's log, never for the payer: it is upstream text about how this
+   * coordinator is wired, and the payer can do nothing with it.
+   */
+  | { reason: "index-unavailable"; detail: string; cause: string }
   /** The payment settled but took no seat. §6: 409, with where to reclaim. */
   | { reason: "no-seat"; detail: string; reclaim: Reclaim }
   /** The crowd has not arrived yet. §6: 202, with the current fill. */
@@ -157,7 +164,18 @@ export async function redeem(
   }
 
   // §8 step 4. The index resolves the id to a position; the contract answers for the row.
-  const depositId = await deps.depositIdFor(receipt.poolId, receipt.transaction);
+  //
+  // Both reads cross the network and both can fail for reasons that say nothing about this
+  // receipt: the index unreachable, past its timeout, or disagreeing with consensus. None of
+  // those is a bad proof or a missing deposit, so they get their own answer rather than
+  // borrowing 401 or 404 - and in particular the payer must not be told their seat does not
+  // exist because the index is down.
+  let depositId: bigint | undefined;
+  try {
+    depositId = await deps.depositIdFor(receipt.poolId, receipt.transaction);
+  } catch (error) {
+    return unavailable("the index could not be reached", error);
+  }
   if (depositId === undefined) {
     const indexedBlock = await deps.indexedBlock?.().catch(() => undefined);
     return {
@@ -170,7 +188,14 @@ export async function redeem(
     };
   }
 
-  const deposit = await deps.depositAt(terms.poolId, depositId);
+  let deposit: Deposit;
+  try {
+    deposit = await deps.depositAt(terms.poolId, depositId);
+  } catch (error) {
+    // Covers the index naming a row the contract does not have, which is the index disagreeing
+    // with consensus - still not an answer about this payer, and still not theirs to fix.
+    return unavailable("the deposit could not be read back from the contract", error);
+  }
   if (deposit.payer.toLowerCase() !== account.evmAddress.toLowerCase()) {
     return {
       ok: false,
@@ -224,18 +249,31 @@ export async function redeem(
   };
 }
 
+/** A read failed, and the failure is this server's rather than the payer's. */
+function unavailable(detail: string, error: unknown): RedemptionResult {
+  return {
+    ok: false,
+    reason: "index-unavailable",
+    detail,
+    cause: error instanceof Error ? error.message : String(error),
+  };
+}
+
 /**
- * The HTTP status each outcome maps to - `quorum-scheme.md` §6's last five rows, plus two.
+ * The HTTP status each outcome maps to - `quorum-scheme.md` §6's last five rows, plus three.
  *
  * §6's table answers 401 for any proof that does not stand up, which is right for a signature
- * that does not verify and wrong for the two cases below, so both are stated in §8 rather than
- * folded into 401:
+ * that does not verify and wrong for the three cases below, so each is stated separately rather
+ * than folded into 401:
  *
  *   - **403** for a signature that verifies against an account the deposit does not belong to.
  *     401 invites a client to present a better credential; there is no better credential, and
  *     a payer who re-signs learns nothing. The proof was good and the claim was not theirs
  *   - **404** for a transaction this pool has no deposit for. It is not a bad proof either, and
  *     the ordinary cause is an index a second behind the payment that just settled
+ *   - **503** when a read the decision needs could not be made at all. The receipt may well be
+ *     good; this server cannot currently tell, and saying 404 would report a seat as missing
+ *     because an index is down
  */
 export function statusFor(refusal: RedemptionRefusal): number {
   switch (refusal.reason) {
@@ -246,6 +284,8 @@ export function statusFor(refusal: RedemptionRefusal): number {
       return 403;
     case "no-such-deposit":
       return 404;
+    case "index-unavailable":
+      return 503;
     case "no-seat":
     case "pool-expired":
       return 409;

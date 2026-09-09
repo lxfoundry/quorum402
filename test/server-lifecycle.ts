@@ -87,6 +87,10 @@ interface Stubs {
   indexedDepositId?: bigint | undefined;
   /** Run with no index at all, as a deployment with `SUBGRAPH_URL` unset does. */
   noIndex?: boolean;
+  /** An index that is wired but unreachable, as distinct from one that is behind. */
+  indexThrows?: boolean;
+  /** The contract read that answers for the row the index pointed at, failing. */
+  depositAtThrows?: boolean;
   /** The ledger's answer about an account. Throws for a key that cannot sign. */
   accountOf?: ServerDeps["accountOf"];
 }
@@ -116,7 +120,10 @@ function deps(stubs: Stubs = {}): ServerDeps & { logged: string[] } {
       committedTinybars: async () => stubs.committed ?? 0n,
       balanceTinybars: async () => stubs.balance ?? 0n,
       revertReasonOf: async () => undefined,
-      depositAt: async () => stubs.deposit ?? countedDeposit,
+      depositAt: async () => {
+        if (stubs.depositAtThrows) throw new Error("execution reverted: NoSuchDeposit");
+        return stubs.deposit ?? countedDeposit;
+      },
       recordDeposit:
         stubs.record ??
         (async () => ({
@@ -149,6 +156,9 @@ function deps(stubs: Stubs = {}): ServerDeps & { logged: string[] } {
       ? undefined
       : {
           depositFor: async () => {
+            if (stubs.indexThrows) {
+              throw new Error("subgraph error: Store error: database unavailable at 10.0.0.4");
+            }
             const depositId =
               "indexedDepositId" in stubs ? stubs.indexedDepositId : 0n;
             return depositId === undefined
@@ -488,6 +498,30 @@ describe("§6 lifecycle", () => {
     });
 
     assert.equal(res.status, 401);
+  });
+
+  it("503s rather than 500s when the index cannot be reached", async () => {
+    // A behind index and a down index are different answers. The first is 404 with the lag
+    // reported; the second must not tell a seat holder their payment does not exist, and must
+    // not fall through to the route's catch-all either.
+    const res = await request(deps({ indexThrows: true }), `/benchmark/${SLUG}`, {
+      [QUORUM_RECEIPT_HEADER]: receipt(),
+    });
+
+    assert.equal(res.status, 503);
+    assert.equal(res.headers.get("retry-after"), "5");
+    assert.equal(res.body.error, "index-unavailable");
+    // The upstream text stays in the log. It describes this server's plumbing, not the receipt.
+    assert.doesNotMatch(JSON.stringify(res.body), /10\.0\.0\.4|Store error/);
+  });
+
+  it("503s when the contract cannot answer for the row the index found", async () => {
+    const res = await request(deps({ depositAtThrows: true }), `/benchmark/${SLUG}`, {
+      [QUORUM_RECEIPT_HEADER]: receipt(),
+    });
+
+    assert.equal(res.status, 503);
+    assert.doesNotMatch(JSON.stringify(res.body), /NoSuchDeposit/);
   });
 
   it("404s a payment the index has not caught up with, and says how far it has got", async () => {

@@ -224,9 +224,13 @@ fails. `conditional` adds one row: **202 Accepted**.
 | " | Proof valid, but the deposit belongs to another account | 403 |
 | " | No deposit in this pool for that transaction | 404 |
 | " | Proof invalid or expired | 401 |
+| " | A read the decision needs could not be made | 503 + `Retry-After` |
+| " | Build has no index wired, so no transaction id can be resolved | 501 |
 
-Redemption is not a payment handshake, so the last six are ordinary HTTP rather than x402 error
-mappings.
+Redemption is not a payment handshake, so the last eight are ordinary HTTP rather than x402 error
+mappings. The **501** is the odd one: it is a statement about the deployment rather than about the
+request, and it exists because §8 step 4 needs the binding's logs. A server with no way to read
+them cannot answer *any* redemption, and saying so plainly beats refusing good receipts with 401.
 
 **403 and 404 are distinguished from 401 deliberately.** All three refuse, and a payer can act on
 only one of them. 401 says the proof did not stand up, so signing again with the right key, pool
@@ -236,6 +240,15 @@ has no deposit under that transaction id, which is not a statement about the pro
 whose ordinary cause is an index a second behind the settlement that just funded the seat, so a
 server SHOULD report how far the index has got and a client SHOULD retry rather than conclude its
 payment never happened.
+
+**503 is the fourth, and it is not about the receipt at all.** Redemption reads an index and a
+contract, and either can be unreachable, slow past its timeout, or — where the index names a row
+consensus does not have — wrong. A server that let those surface as 404 would tell a payer holding
+a good seat that their payment does not exist; one that let them surface as 500 would say nothing
+at all. **The distinction a server MUST preserve is between a fact about the pool and a fact about
+itself.** It SHOULD carry `Retry-After`, and it MUST NOT return the underlying failure to the
+payer: upstream error text describes how the coordinator is wired, the payer can act on none of
+it, and a refusal is a poor place to publish it.
 
 **Delivery depends on the threshold being met, never on the seller having been paid.** Paying the
 seller is a separate, permissionless action; coupling a buyer's access to it would let a failed
@@ -486,6 +499,8 @@ sequenceDiagram
             G-->>RS: depositId
             RS->>P: depositAt(poolId, depositId)
             P-->>RS: payer, counted
+        else either read fails
+            RS-->>B: 503 + Retry-After — a fact about this server,<br/>never reported as a missing seat
         end
         RS->>RS: recorded payer ≠ this account → 403, not 401 —<br/>the proof was good, the claim was not theirs
         RS->>RS: counted = false → 409 + where to reclaim
@@ -505,6 +520,11 @@ sequenceDiagram
 Nothing is written down on any path. The server holds no record that a seat was redeemed, so a
 restart, a second coordinator, or a third party with the same reads reaches the same answer —
 which is what "entitlement is derived from the hold binding's state" means in practice.
+
+The two reads in the green band are the only places this flow can fail for a reason that is not
+about the receipt, and both are drawn ending at 503 rather than at a 404 or a 500. That is the
+same rule §6 states: a coordinator that cannot make a read owes the payer the difference between
+*"there is no such seat"* and *"I cannot currently tell"*.
 
 ## 9. Reversal
 

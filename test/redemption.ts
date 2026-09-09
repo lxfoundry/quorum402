@@ -313,3 +313,62 @@ describe("an index that is behind", () => {
     assert.equal(!result.ok && result.reason, "no-such-deposit");
   });
 });
+
+describe("an index that is down", () => {
+  it("does not report a missing seat because a read failed", async () => {
+    // The distinction that matters: "no deposit" is a fact about the pool, and an unreachable
+    // index is a fact about this server. Answering 404 would tell a payer holding a good seat
+    // that their payment never happened.
+    const result = await attempt({
+      depositIdFor: async () => {
+        throw new Error("fetch failed: ECONNREFUSED 127.0.0.1:8000");
+      },
+    });
+
+    assert.equal(!result.ok && result.reason, "index-unavailable");
+    assert.equal(!result.ok && statusFor(result), 503);
+  });
+
+  it("keeps the upstream failure out of what the payer is told", async () => {
+    const result = await attempt({
+      depositIdFor: async () => {
+        throw new Error("subgraph error: Store error: database unavailable at 10.0.0.4:5432");
+      },
+    });
+
+    assert.equal(!result.ok && result.reason, "index-unavailable");
+    // The payer gets what this server could not do; the log gets why.
+    assert.equal(!result.ok ? result.detail : "", "the index could not be reached");
+    assert.doesNotMatch(!result.ok ? result.detail : "", /10\.0\.0\.4/);
+    assert.match(!result.ok && result.reason === "index-unavailable" ? result.cause : "", /database unavailable/);
+  });
+
+  it("answers the same way when the contract read is the one that fails", async () => {
+    // Includes the index naming a row the contract does not have - a disagreement between the
+    // index and consensus, which is still nothing the payer did.
+    const result = await attempt({
+      depositAt: async () => {
+        throw new Error("execution reverted: NoSuchDeposit");
+      },
+    });
+
+    assert.equal(!result.ok && result.reason, "index-unavailable");
+    assert.equal(!result.ok && statusFor(result), 503);
+  });
+
+  it("still refuses a bad proof rather than blaming the index", async () => {
+    // §8's order holds under failure too: nothing reaches the index until the signature has
+    // verified, so a forged receipt gets 401 on a server whose index is down.
+    const result = await attempt(
+      {
+        depositIdFor: async () => {
+          throw new Error("fetch failed");
+        },
+      },
+      sign(PrivateKey.generateECDSA()),
+    );
+
+    assert.equal(!result.ok && result.reason, "invalid-proof");
+    assert.equal(!result.ok && statusFor(result), 401);
+  });
+});

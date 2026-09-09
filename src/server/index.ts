@@ -46,6 +46,7 @@ import { FailureReporter } from "./failures.js";
 import { inspectBindingTransfer } from "./payer.js";
 import { bindingRequestFor, validateQuorumPayload } from "./payment.js";
 import { PoolRegistry } from "./pools.js";
+import type { PoolAvailability } from "./pools.js";
 import { preflight } from "./preflight.js";
 import type { SolvencyReader } from "./preflight.js";
 import { buildReceipt } from "./receipt.js";
@@ -360,7 +361,13 @@ async function redeemSeat(
   // The pool must be one that sold this URL. `sellingPoolFor` is no help here and would be
   // wrong: by the time a seat is worth redeeming the pool has stopped selling, which is the
   // normal case rather than an error.
-  const pools = await deps.registry.poolsFor(resourceUrl);
+  let pools: bigint[];
+  try {
+    pools = await deps.registry.poolsFor(resourceUrl);
+  } catch (error) {
+    unavailable(res, resourceUrl, "the pools for this resource could not be read", error);
+    return;
+  }
   const claimed = pools.find((poolId) => poolId.toString() === receipt.poolId);
   if (claimed === undefined) {
     // Same answer as a bad signature, and deliberately: a receipt naming a pool that never sold
@@ -370,7 +377,14 @@ async function redeemSeat(
     return;
   }
 
-  const { terms, state } = await deps.registry.availability(claimed);
+  let availability: PoolAvailability;
+  try {
+    availability = await deps.registry.availability(claimed);
+  } catch (error) {
+    unavailable(res, resourceUrl, "the pool's state could not be read", error);
+    return;
+  }
+  const { terms, state } = availability;
   const index = deps.index;
   const outcome = await redeem(
     {
@@ -402,6 +416,12 @@ async function redeemSeat(
     return;
   }
 
+  // Not an answer about the receipt at all, so it does not get the shape the others share.
+  if (outcome.reason === "index-unavailable") {
+    unavailable(res, resourceUrl, outcome.detail, outcome.cause);
+    return;
+  }
+
   const body: Record<string, unknown> = { error: outcome.reason, detail: outcome.detail };
   // §9 keeps reversal off this server, so a refusal that means "your money is owed back" says
   // where to get it without this server being involved in the getting.
@@ -411,6 +431,20 @@ async function redeemSeat(
     body.indexedBlock = outcome.indexedBlock.toString();
   }
   res.status(statusFor(outcome)).json(body);
+}
+
+/**
+ * 503: a read this decision needed could not be made.
+ *
+ * The cause is logged and never sent. It is upstream text about how this coordinator is wired,
+ * the payer can do nothing with it, and a refusal should not double as a description of the
+ * server's dependencies. `Retry-After` because unlike every other refusal on this path, trying
+ * again really is the right thing for this payer to do.
+ */
+function unavailable(res: Response, resourceUrl: string, detail: string, cause: unknown): void {
+  const because = cause instanceof Error ? cause.message : String(cause);
+  console.error(`redemption for ${resourceUrl} could not be decided: ${detail} - ${because}`);
+  res.status(503).set("Retry-After", "5").json({ error: "index-unavailable", detail });
 }
 
 function poolSummary(terms: PoolTerms, state: PoolState) {
