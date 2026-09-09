@@ -194,8 +194,9 @@ What it asserts, in order:
 | the money out | the recipient received exactly three seats, and the contract's commitments fell by the same |
 
 Each run opens its own pool on an ephemeral port, so the resource URL it sells is one no
-earlier pool can name. Runs do not interfere with each other, and one that dies leaves nothing
-behind that a later run will pick up.
+earlier pool can name — the licence row above asserts exactly that. The rest of the isolation is
+a design property rather than a measured one: concurrent runs should not interfere, and a run
+that dies should leave behind only a pool that expires into refundable. Neither has been tested.
 
 ## Demo
 
