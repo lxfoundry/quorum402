@@ -26,6 +26,7 @@ import { accountOf, awaitBalance, balanceTinybars, evmAddressOf } from "../../sr
 import { PoolsClient } from "../../src/pool/client.js";
 import { FailureReporter } from "../../src/server/failures.js";
 import { PoolRegistry } from "../../src/server/pools.js";
+import { CLAIM_REFUND } from "../../src/server/receipt.js";
 import type { ServerDeps } from "../../src/server/index.js";
 import { Facilitator } from "../../src/x402/facilitator.js";
 import { buySeat, redeemSeat } from "../../src/buyer/agent.js";
@@ -247,7 +248,7 @@ export async function quorumMissed(report: Reporter, params: ScenarioParams): Pr
         report.expect(
           reclaim?.contract === contractId &&
             reclaim.poolId === poolId.toString() &&
-            reclaim.method !== undefined,
+            reclaim.method === CLAIM_REFUND,
           `and told to call ${reclaim?.method} on ${reclaim?.contract} for pool ${reclaim?.poolId}`,
           `the 409 carried no usable reclaim: ${JSON.stringify(reclaim)}`,
         );
