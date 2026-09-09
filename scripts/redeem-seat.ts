@@ -179,7 +179,10 @@ async function locateSeat(params: {
   if (transactionArg) {
     for (const poolId of newestFirst) {
       const deposit = await graph.depositFor(poolId.toString(), transactionArg);
-      if (deposit) return { poolId, transaction: transactionArg };
+      // `depositFor` always answers with an object - `indexedBlock` rides along even when there
+      // is no row - so the position is the only field that says the index placed it here. A bare
+      // truthiness check passes on the first pool tried and reaches for the wrong seat.
+      if (deposit.depositId !== undefined) return { poolId, transaction: transactionArg };
     }
     throw new Error(
       `the index cannot place ${transactionArg} in any pool naming ${resourceUrl} (${named}). Either it has not caught up, or that settlement bought a seat somewhere else.`,
