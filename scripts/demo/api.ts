@@ -37,7 +37,7 @@ import { PoolsClient } from "../../src/pool/client.js";
 import type { PoolState, PoolTerms } from "../../src/pool/client.js";
 import type { Coordinator } from "../../src/server/index.js";
 import type { Receipt } from "../../src/server/receipt.js";
-import { hbarToTinybars, TINYBARS_PER_HBAR } from "../../src/x402/hedera-exact.js";
+import { hbarToTinybars, tinybarsToHbar } from "../../src/x402/hedera-exact.js";
 import { ProtocolLog } from "./log.js";
 import { mergeSeats } from "./seats.js";
 import type { LivePool, SeatRow } from "./seats.js";
@@ -156,7 +156,7 @@ async function stateFor(
     wallets: ctx.wallets.all().map((w) => ({
       ...w,
       accountUrl: hashscanAccount(deps.network, w.accountId),
-      hbar: hbarText(held.get(w.accountId) ?? 0n),
+      hbar: tinybarsToHbar(held.get(w.accountId) ?? 0n),
     })),
     choices: { ttl: TTL_CHOICES, seatHbar: SEAT_HBAR_CHOICES },
     services,
@@ -204,7 +204,7 @@ function poolCard(terms: PoolTerms, live: PoolState, reason: string | undefined,
     deadline: terms.deadline,
     secondsLeft: Math.max(0, terms.deadline - now),
     unitTinybars: terms.unitTinybars.toString(),
-    seatHbar: hbarText(terms.unitTinybars),
+    seatHbar: tinybarsToHbar(terms.unitTinybars),
     available: reason === undefined,
     reason,
   };
@@ -253,7 +253,7 @@ async function seatsFor(
 function withLinks(network: string, seat: SeatRow) {
   return {
     ...seat,
-    seatHbar: hbarText(BigInt(seat.unitTinybars)),
+    seatHbar: tinybarsToHbar(BigInt(seat.unitTinybars)),
     transactionUrl: hashscanTransaction(network, seat.transaction),
   };
 }
@@ -351,7 +351,7 @@ async function buy(ctx: DemoContext, body: { wallet: string; slug: string }) {
       const extra = offered.extra as { poolId?: string; threshold?: number; filled?: number };
       ctx.log.response(
         402,
-        `PAYMENT-REQUIRED  scheme=quorum  pool ${extra.poolId}  ${extra.filled ?? "?"}/${extra.threshold} seats  ${hbarText(BigInt(offered.amount))} ℏ`,
+        `PAYMENT-REQUIRED  scheme=quorum  pool ${extra.poolId}  ${extra.filled ?? "?"}/${extra.threshold} seats  ${tinybarsToHbar(BigInt(offered.amount))} ℏ`,
       );
       ctx.log.request(wallet.label, `GET /benchmark/${benchmark.slug}  + PAYMENT-SIGNATURE`);
     }
@@ -451,11 +451,11 @@ async function refund(ctx: DemoContext, body: { wallet: string; poolId: string }
   try {
     ctx.log.chain(`claimRefund(${poolId})  contract ${contractId} - the coordinator is not involved`, wallet.label);
     const claimed = await new PoolsClient(client, ContractId.fromString(contractId)).claimRefund(poolId);
-    ctx.log.chain(`refunded ${hbarText(claimed.tinybars)} ℏ to ${wallet.accountId}`, wallet.label);
+    ctx.log.chain(`refunded ${tinybarsToHbar(claimed.tinybars)} ℏ to ${wallet.accountId}`, wallet.label);
     return {
       poolId: body.poolId,
       tinybars: claimed.tinybars.toString(),
-      hbar: hbarText(claimed.tinybars),
+      hbar: tinybarsToHbar(claimed.tinybars),
       transaction: claimed.transactionId,
       transactionUrl: hashscanTransaction(deps.network, claimed.transactionId),
     };
@@ -618,9 +618,3 @@ function detailOf(body: unknown): string {
   return [error, detail].filter((part) => typeof part === "string").join("  ");
 }
 
-/** Tinybars as HBAR, trimmed. Text throughout, because a float would round a price. */
-function hbarText(tinybars: bigint): string {
-  const whole = tinybars / TINYBARS_PER_HBAR;
-  const fraction = (tinybars % TINYBARS_PER_HBAR).toString().padStart(8, "0").replace(/0+$/, "");
-  return fraction ? `${whole}.${fraction}` : `${whole}`;
-}

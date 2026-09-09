@@ -14,10 +14,9 @@ import type { AddressInfo } from "node:net";
 import type { Benchmark } from "../../src/benchmark/catalogue.js";
 import type { Config } from "../../src/config.js";
 import { createApp } from "../../src/server/index.js";
+import { tinybarsToHbar } from "../../src/x402/hedera-exact.js";
 import type { ServerDeps } from "../../src/server/index.js";
 import type { GeneratedAccount } from "../create-accounts.js";
-
-const TINYBARS_PER_HBAR = 100_000_000n;
 
 /**
  * What every scenario needs to run: who is on the network, who is buying, and what a seat costs.
@@ -81,11 +80,7 @@ export class Reporter {
 
 /** Tinybars as HBAR, for humans. Exact - no float goes near it. */
 export function hbar(tinybars: bigint): string {
-  const negative = tinybars < 0n;
-  const absolute = negative ? -tinybars : tinybars;
-  const whole = absolute / TINYBARS_PER_HBAR;
-  const frac = (absolute % TINYBARS_PER_HBAR).toString().padStart(8, "0").replace(/0+$/, "");
-  return `${negative ? "-" : ""}${whole}${frac ? `.${frac}` : ""} HBAR`;
+  return `${tinybarsToHbar(tinybars)} HBAR`;
 }
 
 /** A coordinator listening on a port nothing else owns. */
