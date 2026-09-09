@@ -485,10 +485,10 @@ sequenceDiagram
 
     Note over RS,G: no index wired → 501, before anything else.<br/>The transaction id lives only in the log
     RS->>RS: decode the envelope → 401
-    RS->>P: poolCount, poolOf — does this pool sell this URL?
-    Note over RS,P: it does not → 401, the same answer as a bad<br/>signature: which pools exist is not disclosed here
-    RS->>P: statusOf(poolId)
-    P-->>RS: terms + live state, read once and carried
+    RS->>P: poolCount, then poolOf for any pool not seen before
+    Note over RS,P: no pool of this URL bears the receipt's id → 401, the same<br/>answer as a bad signature: which pools exist is not disclosed here
+    RS->>P: poolOf, statusOf — the named pool's terms and live state
+    P-->>RS: read once, and carried through every check below
 
     rect rgba(120, 160, 255, 0.12)
         Note over RS,M: rules 1-3 — proof first, and no deposit touched in here
