@@ -108,7 +108,7 @@ describe("the receipt envelope", () => {
   });
 
   it("rejects anything malformed rather than throwing", () => {
-    // Every caller answers 400, so a payer cannot act on which of these it was.
+    // Its only caller answers 401, so a payer cannot act on which of these it was.
     const bad = [
       undefined,
       "",

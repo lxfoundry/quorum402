@@ -27,7 +27,7 @@ import {
 } from "../src/x402/http.js";
 import { buildPartiallySignedTransfer } from "../src/x402/hedera-exact.js";
 import type { PaymentRequired, QuorumPaymentPayload, SettlementResponse } from "../src/x402/types.js";
-import { canonicalRedemptionMessage, encodeRedemptionReceipt } from "../src/x402/redemption.js";
+import { encodeRedemptionReceipt, signRedemptionReceipt } from "../src/x402/redemption.js";
 import type { Deposit, PoolState, PoolTerms } from "../src/pool/client.js";
 
 const BASE = "https://quorum402.example";
@@ -211,22 +211,17 @@ async function request(
 function receipt(
   over: { poolId?: string; transaction?: string; validUntil?: number; resource?: string } = {},
 ): string {
-  const claim = {
-    accountId: BUYER,
-    poolId: over.poolId ?? "7",
-    transaction: over.transaction ?? "0.0.7162784@1788894730.022621899",
-    validUntil: over.validUntil ?? Math.floor(Date.now() / 1000) + 300,
-  };
-  const message = canonicalRedemptionMessage({
-    ...claim,
-    network: "hedera:testnet",
-    contract: CONTRACT,
-    resource: over.resource ?? RESOURCE,
-  });
-  return encodeRedemptionReceipt({
-    ...claim,
-    signature: Buffer.from(buyerKey.sign(message)).toString("base64"),
-  });
+  return encodeRedemptionReceipt(
+    signRedemptionReceipt(buyerKey, {
+      accountId: BUYER,
+      poolId: over.poolId ?? "7",
+      transaction: over.transaction ?? "0.0.7162784@1788894730.022621899",
+      validUntil: over.validUntil ?? Math.floor(Date.now() / 1000) + 300,
+      network: "hedera:testnet",
+      contract: CONTRACT,
+      resource: over.resource ?? RESOURCE,
+    }),
+  );
 }
 
 /** A payment a buyer would actually send, against the terms the server is advertising. */

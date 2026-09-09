@@ -12,7 +12,7 @@ import { PrivateKey } from "@hiero-ledger/sdk";
 import { MAX_VALIDITY_WINDOW_SECONDS, redeem, statusFor } from "../src/server/redeem.js";
 import type { RedeemDeps } from "../src/server/redeem.js";
 import type { MirrorAccount } from "../src/hedera/mirror.js";
-import { canonicalRedemptionMessage } from "../src/x402/redemption.js";
+import { signRedemptionReceipt } from "../src/x402/redemption.js";
 import type { RedemptionReceipt } from "../src/x402/redemption.js";
 import type { Deposit, PoolState, PoolTerms } from "../src/pool/client.js";
 
@@ -55,22 +55,15 @@ function sign(
   key: PrivateKey,
   overrides: Partial<RedemptionReceipt & { resource: string; contract: string; network: string }> = {},
 ): RedemptionReceipt {
-  const receipt = {
+  return signRedemptionReceipt(key, {
     accountId: overrides.accountId ?? ACCOUNT,
     poolId: overrides.poolId ?? "7",
     transaction: overrides.transaction ?? "0.0.7162784@1788894730.022621899",
     validUntil: overrides.validUntil ?? NOW_SECONDS + 300,
-  };
-  const message = canonicalRedemptionMessage({
-    ...receipt,
     network: overrides.network ?? NETWORK,
     contract: overrides.contract ?? CONTRACT,
     resource: overrides.resource ?? RESOURCE,
   });
-  return {
-    ...receipt,
-    signature: Buffer.from(key.sign(message)).toString("base64"),
-  };
 }
 
 function deps(overrides: Partial<RedeemDeps> = {}): RedeemDeps {
@@ -232,10 +225,11 @@ describe("the checks run in §8's order", () => {
     // Order matters to the payer here, not just to the server: a late payment will never become
     // a seat, so answering 202 "still filling" would be telling them to wait forever.
     const late: Deposit = { ...counted, counted: false };
+    // The third argument is the live state `redeem` reads; `terms.state` is only what was last
+    // written down, and setting it here would suggest otherwise.
     const result = await attempt({ depositAt: async () => late }, sign(ecdsa), "Open", {
       ...terms,
       seats: 1,
-      state: "Open",
     });
 
     assert.equal(!result.ok && result.reason, "no-seat");
@@ -262,7 +256,7 @@ describe("claims that are real but do not entitle", () => {
   });
 
   it("answers 202 with the fill while the pool is still open", async () => {
-    const result = await attempt({}, sign(ecdsa), "Open", { ...terms, seats: 2, state: "Open" });
+    const result = await attempt({}, sign(ecdsa), "Open", { ...terms, seats: 2 });
 
     assert.equal(!result.ok && result.reason, "still-filling");
     assert.equal(!result.ok && statusFor(result), 202);

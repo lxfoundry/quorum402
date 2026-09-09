@@ -80,7 +80,6 @@ export interface Deposit {
 }
 
 /** The shape `depositAt` returns once decoded. Same fields; `payer` is already a hex string. */
-type RawDeposit = Deposit;
 
 let abiCache: Abi | undefined;
 
@@ -244,12 +243,6 @@ export class PoolsClient {
     };
   }
 
-  /** How many deposits a pool has recorded, counted and late alike. */
-  async depositCount(poolId: bigint): Promise<bigint> {
-    const args = new ContractFunctionParameters().addUint256(long(poolId));
-    return BigInt((await this.queryUint256("depositCount", args)).toFixed());
-  }
-
   /**
    * One deposit, by the index the log gave for it.
    *
@@ -258,25 +251,23 @@ export class PoolsClient {
    * read back from here. An indexer that lagged, or lied, can then at worst point at the wrong
    * row, and the row itself still comes from consensus state.
    *
-   * Reverts `NoSuchDeposit` above `depositCount`, so callers bound the index first.
+   * Reverts `NoSuchDeposit` for an index the pool does not have. The caller does not bound the
+   * index first on purpose: an index that names a row consensus lacks is an index disagreeing
+   * with consensus, which is not an answer about the payer, and `redeem` reports it as a read
+   * it could not make rather than as a missing seat.
    */
   async depositAt(poolId: bigint, depositId: bigint): Promise<Deposit> {
     const args = new ContractFunctionParameters()
       .addUint256(long(poolId))
       .addUint256(long(depositId));
     const data = await this.queryBytes("depositAt", args);
-    const raw = decodeFunctionResult({
+    // No conversion, unlike `poolOf`: every field of `depositAt` already decodes to the type
+    // `Deposit` declares, so a field-by-field copy here would only mimic work it is not doing.
+    return decodeFunctionResult({
       abi: abi(),
       functionName: "depositAt",
       data,
-    }) as unknown as RawDeposit;
-
-    return {
-      payer: raw.payer,
-      tinybars: raw.tinybars,
-      counted: raw.counted,
-      refunded: raw.refunded,
-    };
+    }) as unknown as Deposit;
   }
 
   /** Tinybars this contract owes to payers and recipients. Never derived from its balance. */

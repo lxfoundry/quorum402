@@ -43,12 +43,10 @@ export interface DepositLookup {
 export interface GraphClientOptions {
   /** The subgraph's GraphQL endpoint. */
   url: string;
-  /** Bounded so a slow index cannot hold a request open indefinitely. */
-  timeoutMs?: number;
-  fetchImpl?: typeof fetch;
 }
 
-const DEFAULT_TIMEOUT_MS = 5_000;
+/** Bounded so a slow index cannot hold a request open indefinitely. */
+const TIMEOUT_MS = 5_000;
 
 interface GraphResponse<T> {
   data?: T;
@@ -62,13 +60,9 @@ function blockOf(meta: { block?: { number?: number } } | undefined): bigint | un
 
 export class GraphClient {
   private readonly url: string;
-  private readonly timeoutMs: number;
-  private readonly fetchImpl: typeof fetch;
 
   constructor(options: GraphClientOptions) {
     this.url = options.url;
-    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
   /**
@@ -161,8 +155,8 @@ export class GraphClient {
   }
 
   private async request<T>(query: string, variables: Record<string, unknown>): Promise<T> {
-    const signal = AbortSignal.timeout(this.timeoutMs);
-    const res = await this.fetchImpl(this.url, {
+    const signal = AbortSignal.timeout(TIMEOUT_MS);
+    const res = await fetch(this.url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ query, variables }),

@@ -62,21 +62,21 @@ export async function accountOf(mirrorUrl: string, accountId: string): Promise<M
   return { evmAddress: body.evm_address, key: { type, hex: body.key.key } };
 }
 
-/** One account record, read once. `evmAddressOf` and `accountOf` want different fields of it. */
-async function accountRecord(
-  mirrorUrl: string,
-  accountId: string,
-): Promise<{ evm_address?: string; key?: { _type?: string; key?: string } | null }> {
+/** One account record. The three readers below each want a different field of it. */
+interface AccountRecord {
+  evm_address?: string;
+  key?: { _type?: string; key?: string } | null;
+  balance?: { balance?: number };
+}
+
+async function accountRecord(mirrorUrl: string, accountId: string): Promise<AccountRecord> {
   const res = await fetch(`${mirrorUrl}/api/v1/accounts/${accountId}?limit=1`);
   if (!res.ok) throw new Error(`mirror node returned ${res.status} for account ${accountId}`);
-  return (await res.json()) as { evm_address?: string; key?: { _type?: string; key?: string } | null };
+  return (await res.json()) as AccountRecord;
 }
 
 export async function balanceTinybars(mirrorUrl: string, id: string): Promise<bigint> {
-  const res = await fetch(`${mirrorUrl}/api/v1/accounts/${id}?limit=1`);
-  if (!res.ok) throw new Error(`mirror node returned ${res.status} for ${id}`);
-  const body = (await res.json()) as { balance?: { balance?: number } };
-  return BigInt(body.balance?.balance ?? 0);
+  return BigInt((await accountRecord(mirrorUrl, id)).balance?.balance ?? 0);
 }
 
 /**

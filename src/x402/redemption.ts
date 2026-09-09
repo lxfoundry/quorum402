@@ -68,6 +68,32 @@ export function canonicalRedemptionMessage(claim: RedemptionClaim): Buffer {
   return Buffer.from(`${lines.join("\n")}\n`, "utf8");
 }
 
+/**
+ * Anything that can sign bytes. Structural on purpose: this module is the one both sides share,
+ * and it should not drag a ledger SDK into a verifier that only needs the layout.
+ */
+export interface SignsBytes {
+  sign(bytes: Uint8Array): Uint8Array;
+}
+
+/**
+ * Sign a claim into the receipt a payer presents.
+ *
+ * The middle of the three steps this module exists to keep together - build the exact bytes,
+ * sign them, wrap the result. Assembled by hand at a call site it means restating the claim's
+ * fields in two shapes, and the only symptom of restating them wrongly is §8 answering
+ * "signature does not verify", which says nothing about which field drifted.
+ */
+export function signRedemptionReceipt(key: SignsBytes, claim: RedemptionClaim): RedemptionReceipt {
+  return {
+    accountId: claim.accountId,
+    poolId: claim.poolId,
+    transaction: claim.transaction,
+    validUntil: claim.validUntil,
+    signature: Buffer.from(key.sign(canonicalRedemptionMessage(claim))).toString("base64"),
+  };
+}
+
 export function encodeRedemptionReceipt(receipt: RedemptionReceipt): string {
   return encodeHeaderValue(receipt);
 }

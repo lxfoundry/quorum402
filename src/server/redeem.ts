@@ -17,6 +17,7 @@
 import { PublicKey } from "@hiero-ledger/sdk";
 import type { Deposit, PoolState, PoolTerms } from "../pool/client.js";
 import type { AccountKeyType, MirrorAccount } from "../hedera/mirror.js";
+import { CLAIM_REFUND } from "./receipt.js";
 import { canonicalRedemptionMessage } from "../x402/redemption.js";
 import type { RedemptionReceipt } from "../x402/redemption.js";
 
@@ -194,7 +195,7 @@ export async function redeem(
 
   const reclaim: Reclaim = {
     contract: deps.contractId,
-    method: "claimRefund(uint256)",
+    method: CLAIM_REFUND,
     poolId: receipt.poolId,
   };
 
