@@ -27,6 +27,7 @@ import {
 } from "../benchmark/catalogue.js";
 import type { Benchmark } from "../benchmark/catalogue.js";
 import { caip2, loadConfig } from "../config.js";
+import type { Config } from "../config.js";
 import { GraphClient } from "../graph/client.js";
 import { accountOf, balanceTinybars, evmAddressOf } from "../hedera/mirror.js";
 import type { MirrorAccount } from "../hedera/mirror.js";
@@ -479,7 +480,14 @@ function refuse(
   res.status(statusFor(refusal)).json(body);
 }
 
-function poolSummary(terms: PoolTerms, state: PoolState) {
+/**
+ * The pool as a payer is told about it - `quorum-scheme.md` §3's `extra`, in JSON.
+ *
+ * Exported because the demo UI renders the same six facts and inventing a second shape for them
+ * would let the two drift: what the page shows a buyer and what a 402 tells them would then be
+ * different objects describing the same pool.
+ */
+export function poolSummary(terms: PoolTerms, state: PoolState) {
   return {
     poolId: terms.poolId.toString(),
     state,
@@ -494,8 +502,29 @@ function detail(rejection: { reason: string; detail: string }) {
   return { reason: rejection.reason, detail: rejection.detail };
 }
 
-/** Build the real thing from configuration, and listen. */
-async function main(): Promise<void> {
+/**
+ * Everything a coordinator needs, built from configuration.
+ *
+ * Separate from `main` so that a second entry point - the demo UI, which mounts this app beside
+ * its own routes - stands the coordinator up **the same way** rather than assembling a lookalike
+ * from the same parts. A dependency wired twice is a dependency that can be wired differently,
+ * and the failures that produces (a different `publicBaseUrl`, a missing index) are the ones that
+ * look like protocol bugs.
+ *
+ * Hands back the pieces it built rather than only the app: a caller doing more than serving
+ * requests needs the contract client and the config, and reaching them through `deps` would mean
+ * widening `ServerDeps` to suit a caller the coordinator does not have.
+ */
+export interface Coordinator {
+  deps: ServerDeps;
+  pools: PoolsClient;
+  /** The SDK client `pools` signs with. The caller closes it. */
+  client: Client;
+  cfg: Config;
+  contractId: string;
+}
+
+export async function wireCoordinator(): Promise<Coordinator> {
   const cfg = loadConfig();
   const network = caip2(cfg.network);
   const deployment = readDeployment(network);
@@ -509,39 +538,64 @@ async function main(): Promise<void> {
   const pools = new PoolsClient(client, ContractId.fromString(deployment.contractId));
   const coordinatorAddress = await evmAddressOf(cfg.mirrorUrl, cfg.operatorId);
 
-  const app = createApp({
-    registry: new PoolRegistry(pools),
+  return {
+    cfg,
+    client,
     pools,
-    facilitator: new Facilitator(cfg.facilitatorUrl),
-    failures: new FailureReporter({ webhookUrl: process.env.ALERT_WEBHOOK_URL?.trim() }),
-    network,
-    payTo: deployment.contractId,
     contractId: deployment.contractId,
-    publicBaseUrl: cfg.publicBaseUrl,
-    coordinatorAccountId: cfg.operatorId,
-    coordinatorAddress,
-    accountOf: (accountId) => accountOf(cfg.mirrorUrl, accountId),
-    coordinatorBalanceTinybars: () => balanceTinybars(cfg.mirrorUrl, cfg.operatorId),
-    index: cfg.subgraphUrl ? new GraphClient({ url: cfg.subgraphUrl }) : undefined,
-  });
+    deps: {
+      registry: new PoolRegistry(pools),
+      pools,
+      facilitator: new Facilitator(cfg.facilitatorUrl),
+      failures: new FailureReporter({ webhookUrl: process.env.ALERT_WEBHOOK_URL?.trim() }),
+      network,
+      payTo: deployment.contractId,
+      contractId: deployment.contractId,
+      publicBaseUrl: cfg.publicBaseUrl,
+      coordinatorAccountId: cfg.operatorId,
+      coordinatorAddress,
+      accountOf: (accountId) => accountOf(cfg.mirrorUrl, accountId),
+      coordinatorBalanceTinybars: () => balanceTinybars(cfg.mirrorUrl, cfg.operatorId),
+      index: cfg.subgraphUrl ? new GraphClient({ url: cfg.subgraphUrl }) : undefined,
+    },
+  };
+}
 
-  app.listen(cfg.port, () => {
-    console.log(`\nquorum402 coordinator on ${network}\n`);
-    console.log(`  listening    http://localhost:${cfg.port}`);
-    console.log(`  public url   ${cfg.publicBaseUrl}`);
-    console.log(`  contract     ${deployment.contractId}`);
-    console.log(`  coordinator  ${cfg.operatorId}  ${coordinatorAddress}`);
-    console.log(`  facilitator  ${cfg.facilitatorUrl}`);
+/**
+ * What the process says about itself on startup.
+ *
+ * Exported for the same reason the wiring is: a second entry point that printed a different
+ * banner would be a second account of how this coordinator is configured, and the line about the
+ * index being absent is the one worth never losing.
+ */
+export function describeCoordinator(coordinator: Coordinator): string[] {
+  const { cfg, deps, contractId } = coordinator;
+  return [
+    `  listening    http://localhost:${cfg.port}`,
+    `  public url   ${cfg.publicBaseUrl}`,
+    `  contract     ${contractId}`,
+    `  coordinator  ${cfg.operatorId}  ${deps.coordinatorAddress}`,
+    `  facilitator  ${cfg.facilitatorUrl}`,
     // Said out loud either way: a coordinator that silently cannot redeem looks identical to
     // one that can, right up until a payer with a met pool presents a receipt.
-    console.log(
-      cfg.subgraphUrl
-        ? `  index        ${cfg.subgraphUrl}`
-        : `  index        (none - SUBGRAPH_URL unset, so redemption answers 501)`,
-    );
-    for (const benchmark of BENCHMARKS) {
-      console.log(`  selling      ${resourceUrlFor(cfg.publicBaseUrl, benchmark.slug)}`);
-    }
+    cfg.subgraphUrl
+      ? `  index        ${cfg.subgraphUrl}`
+      : `  index        (none - SUBGRAPH_URL unset, so redemption answers 501)`,
+    ...BENCHMARKS.map(
+      (benchmark) => `  selling      ${resourceUrlFor(cfg.publicBaseUrl, benchmark.slug)}`,
+    ),
+  ];
+}
+
+/** Build the real thing from configuration, and listen. */
+async function main(): Promise<void> {
+  const coordinator = await wireCoordinator();
+  const { cfg, deps } = coordinator;
+  const app = createApp(deps);
+
+  app.listen(cfg.port, () => {
+    console.log(`\nquorum402 coordinator on ${deps.network}\n`);
+    for (const line of describeCoordinator(coordinator)) console.log(line);
     console.log();
   });
 }
