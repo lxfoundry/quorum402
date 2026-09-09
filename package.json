@@ -27,6 +27,7 @@
     "check:payout": "tsx scripts/check-payout.ts",
     "record": "tsx scripts/record-deposit.ts",
     "server": "tsx src/server/index.ts",
+    "demo": "tsx scripts/demo/server.ts",
     "pay": "tsx scripts/pay-once.ts",
     "buy": "tsx scripts/buy-seat.ts",
     "redeem": "tsx scripts/redeem-seat.ts",
