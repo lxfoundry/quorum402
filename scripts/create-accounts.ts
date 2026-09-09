@@ -47,6 +47,17 @@ function parseArgs(argv: string[]): Args {
     if (a.startsWith("--")) return false;
     return argv[i - 1] !== "--add";
   });
+  // An extra positional is a mis-invocation, not something to drop: `--add seller 5 extra`
+  // and `3 20 extra` both parse as valid today, and the second funds real testnet accounts
+  // from a command whose author clearly meant something else.
+  const expected = add ? 1 : 2;
+  if (positional.length > expected) {
+    throw new Error(
+      add
+        ? `--add <label> takes at most one more argument, [hbarEach]. Got: ${positional.join(" ")}`
+        : `expected at most [count] [hbarEach]. Got: ${positional.join(" ")}`,
+    );
+  }
   const [first, second] = add ? [undefined, positional[0]] : positional;
 
   const count = Number(first ?? 3);
