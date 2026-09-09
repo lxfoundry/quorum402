@@ -87,19 +87,28 @@ export class GraphClient {
         }
         _meta { block { number } }
       }`;
-    const data = await this.request<{
-      deposits: Array<{ depositId: string }>;
-      _meta?: { block?: { number?: number } };
+    const { data, errorText } = await this.post<{
+      deposits?: Array<{ depositId: string }> | null;
+      _meta?: { block?: { number?: number } } | null;
     }>(query, { poolId, txId: hederaTxId });
 
-    const indexedBlock = blockOf(data._meta);
-    if (data.deposits.length > 1) {
+    // `_meta` is advisory: it sharpens a "not indexed yet" refusal and decides nothing. GraphQL
+    // resolves fields independently and answers 200 with the ones that worked, so an index that
+    // places the deposit and fails to report its own head has still answered the question
+    // entitlement turns on. Failing the whole lookup there would 503 a redemption whose seat is
+    // sitting in `deposits` - a seat refused on a diagnostic.
+    if (!data?.deposits) {
+      throw new Error(`subgraph error: ${errorText ?? "no deposits in the response"}`);
+    }
+    const deposits = data.deposits;
+    const indexedBlock = blockOf(data._meta ?? undefined);
+    if (deposits.length > 1) {
       // The contract's replay guard is global, so this cannot happen against a sound index.
       // If it ever does, the index disagrees with consensus and guessing would be the wrong
       // response to that.
-      throw new Error(`index reports ${data.deposits.length} deposits for ${hederaTxId}`);
+      throw new Error(`index reports ${deposits.length} deposits for ${hederaTxId}`);
     }
-    const [deposit] = data.deposits;
+    const [deposit] = deposits;
     return deposit ? { depositId: BigInt(deposit.depositId), indexedBlock } : { indexedBlock };
   }
 
@@ -154,7 +163,17 @@ export class GraphClient {
     return data.deposits[0]?.hederaTxId;
   }
 
-  private async request<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+  /**
+   * The answer as it arrived: whatever `data` came back, and whatever errors came with it.
+   *
+   * Kept separate because the two are not exclusive. A query asking two questions can have one
+   * resolved and the other nulled with an entry in `errors`, and which half that is decides
+   * whether the caller has an answer. `request` wants all of it; `depositFor` does not.
+   */
+  private async post<T>(
+    query: string,
+    variables: Record<string, unknown>,
+  ): Promise<{ data?: T; errorText?: string }> {
     const signal = AbortSignal.timeout(TIMEOUT_MS);
     const res = await fetch(this.url, {
       method: "POST",
@@ -164,11 +183,18 @@ export class GraphClient {
     });
     if (!res.ok) throw new Error(`subgraph returned ${res.status}`);
     const body = (await res.json()) as GraphResponse<T>;
+    const errorText = body.errors?.length
+      ? body.errors.map((e) => e.message).join("; ")
+      : undefined;
+    return { data: body.data, errorText };
+  }
+
+  /** Every field the query asked for, or nothing. */
+  private async request<T>(query: string, variables: Record<string, unknown>): Promise<T> {
     // GraphQL answers 200 with an `errors` array, so the status code alone says nothing.
-    if (body.errors?.length) {
-      throw new Error(`subgraph error: ${body.errors.map((e) => e.message).join("; ")}`);
-    }
-    if (!body.data) throw new Error("subgraph returned no data");
-    return body.data;
+    const { data, errorText } = await this.post<T>(query, variables);
+    if (errorText) throw new Error(`subgraph error: ${errorText}`);
+    if (!data) throw new Error("subgraph returned no data");
+    return data;
   }
 }
