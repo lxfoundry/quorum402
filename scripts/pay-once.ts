@@ -9,6 +9,11 @@
  */
 import { AccountId, Client, PrivateKey } from "@hiero-ledger/sdk";
 import { caip2, loadConfig } from "../src/config.js";
+import {
+  dashedTransactionId,
+  hashscanAccount,
+  hashscanTransaction,
+} from "../src/hedera/explorer.js";
 import { Facilitator } from "../src/x402/facilitator.js";
 import {
   HBAR_ASSET,
@@ -100,14 +105,14 @@ async function main(): Promise<void> {
 
     // 6. Trust the ledger, not the response. Confirm independently on the mirror node.
     if (txId) {
-      await confirmOnMirror(cfg.mirrorUrl, txId, payTo, buyer.accountId);
+      await confirmOnMirror(cfg.mirrorUrl, cfg.network, txId, payTo, buyer.accountId);
     } else {
       // Settlement succeeded but we cannot name the transaction. Show the raw body so the
       // field name can be added rather than guessed at again.
       console.log("");
       console.log(`raw settlement response: ${JSON.stringify(settlement)}`);
       console.log("Funds moved - find it under the payer on HashScan:");
-      console.log(`  https://hashscan.io/testnet/account/${buyer.accountId}`);
+      console.log(`  ${hashscanAccount(cfg.network, buyer.accountId)}`);
     }
   } finally {
     client.close();
@@ -120,12 +125,18 @@ async function main(): Promise<void> {
  */
 async function confirmOnMirror(
   mirrorUrl: string,
+  network: string,
   transactionId: string,
   payTo: string,
   payer: string,
 ): Promise<void> {
-  // Mirror node wants 0.0.x-seconds-nanos, the SDK gives 0.0.x@seconds.nanos.
-  const mirrorId = transactionId.replace("@", "-").replace(/\.(\d+)$/, "-$1");
+  // Mirror node wants 0.0.x-seconds-nanos, the SDK gives 0.0.x@seconds.nanos - and so does
+  // HashScan, which is why one function owns the spelling for both.
+  const mirrorId = dashedTransactionId(transactionId);
+  if (!mirrorId) {
+    console.log(`\n"${transactionId}" is not a transaction id - nothing to confirm\n`);
+    return;
+  }
   const url = `${mirrorUrl}/api/v1/transactions/${mirrorId}`;
 
   for (let attempt = 1; attempt <= 8; attempt++) {
@@ -144,9 +155,7 @@ async function confirmOnMirror(
             console.log(`  ${t.account.padEnd(14)} ${sign}${t.amount} tinybars`);
           }
         }
-        console.log(
-          `\nHashScan: https://hashscan.io/testnet/transaction/${encodeURIComponent(transactionId)}\n`,
-        );
+        console.log(`\nHashScan: ${hashscanTransaction(network, transactionId)}\n`);
         return;
       }
     }

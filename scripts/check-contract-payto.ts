@@ -26,6 +26,7 @@
  */
 import { AccountId, Client, PrivateKey } from "@hiero-ledger/sdk";
 import { caip2, loadConfig } from "../src/config.js";
+import { hashscanAccount } from "../src/hedera/explorer.js";
 import { Facilitator } from "../src/x402/facilitator.js";
 import {
   HBAR_ASSET,
@@ -192,7 +193,7 @@ async function main(): Promise<number> {
       const after = await balanceTinybars(cfg.mirrorUrl, contractId);
       if (after >= expected) {
         ok(`contract balance ${before} -> ${after} tinybars (+${after - before})`);
-        info(`https://hashscan.io/testnet/account/${contractId}`);
+        info(hashscanAccount(cfg.network, contractId));
         return failures;
       }
       if (attempt === 10) {

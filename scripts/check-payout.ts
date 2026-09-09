@@ -24,6 +24,7 @@ import { AccountId, Client, ContractId, PrivateKey } from "@hiero-ledger/sdk";
 import { caip2, loadConfig } from "../src/config.js";
 import { PoolsClient } from "../src/pool/client.js";
 import { readDeployment } from "../src/pool/deployment.js";
+import { hashscanContract } from "../src/hedera/explorer.js";
 import { awaitBalance, balanceTinybars, evmAddressOf } from "../src/hedera/mirror.js";
 import { Facilitator } from "../src/x402/facilitator.js";
 import {
@@ -246,7 +247,7 @@ async function main(): Promise<number> {
       failures++;
     }
 
-    info(`https://hashscan.io/${cfg.network}/contract/${contractId}`);
+    info(hashscanContract(cfg.network, contractId));
   } finally {
     client.close();
   }

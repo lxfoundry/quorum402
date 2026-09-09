@@ -14,6 +14,7 @@ import { AccountId, Client, ContractId, PrivateKey } from "@hiero-ledger/sdk";
 import { resourceUrlFor } from "../../src/benchmark/catalogue.js";
 import { caip2 } from "../../src/config.js";
 import { GraphClient } from "../../src/graph/client.js";
+import { hashscanContract } from "../../src/hedera/explorer.js";
 import { accountOf, awaitBalance, balanceTinybars, evmAddressOf } from "../../src/hedera/mirror.js";
 import { PoolsClient } from "../../src/pool/client.js";
 import { FailureReporter } from "../../src/server/failures.js";
@@ -240,7 +241,7 @@ export async function quorumMet(report: Reporter, params: ScenarioParams): Promi
         `commitments fell by ${hbar(committedBefore - committed)}, expected ${hbar(total)}`,
       );
 
-      report.info(`https://hashscan.io/${cfg.network}/contract/${contractId}`);
+      report.info(hashscanContract(cfg.network, contractId));
     } finally {
       await coordinator.close();
     }
