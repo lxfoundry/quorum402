@@ -15,12 +15,14 @@
  *      npm run e2e -- --seat 0.25      # a different seat price
  */
 import { benchmarkFor } from "../../src/benchmark/catalogue.js";
-import { loadConfig } from "../../src/config.js";
+import { caip2, loadConfig } from "../../src/config.js";
+import { readDeployment } from "../../src/pool/deployment.js";
 import { hbarToTinybars } from "../../src/x402/hedera-exact.js";
 import { loadAccounts } from "../accounts.js";
 import type { GeneratedAccount } from "../create-accounts.js";
 import { Reporter, hbar } from "./harness.js";
 import { preflight } from "./preflight.js";
+import { quorumMet } from "./quorum-met.js";
 
 /** The cut the run sells. Its `minimumContributors` is the pool's threshold. */
 const SLUG = "agent-spend-eu";
@@ -164,9 +166,25 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  // The scenario itself lands in the next commit; until then this is the environment check.
-  console.log("\npreflight passed\n");
-  return 0;
+  const contractId = readDeployment(caip2(cfg.network))?.contractId;
+  if (!contractId) throw new Error("preflight passed without a deployment, which cannot happen");
+
+  await quorumMet(report, {
+    cfg,
+    benchmark,
+    contractId,
+    buyers,
+    recipient,
+    seatPriceTinybars,
+    ttlSeconds: args.ttl,
+  });
+
+  console.log(
+    report.failures === 0
+      ? "\na crowd answered one 402 together, and the seller was paid\n"
+      : `\nFAILED with ${report.failures} problem(s)\n`,
+  );
+  return report.failures;
 }
 
 main().then(
