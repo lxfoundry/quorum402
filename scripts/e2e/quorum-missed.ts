@@ -311,14 +311,16 @@ export async function quorumMissed(report: Reporter, params: ScenarioParams): Pr
       // bystander pays for the transaction and the money still goes only where the deposits
       // say. The operator is that bystander here, and it receives nothing for it.
       report.step("a bystander pushes out the rest");
-      const pushed = await pools.refundAll({
-        poolId,
-        startIndex: 0n,
-        maxDeposits: BigInt(payers.length),
-      });
+      // The window comes from the contract rather than from what this run happens to know it
+      // paid. A bystander is by definition somebody who was not here for the payments, and
+      // sizing the window from `payers.length` would be this scenario using knowledge the
+      // caller it is standing in for does not have.
+      const deposits = await pools.depositCount(poolId);
+      const pushed = await pools.refundAll({ poolId, startIndex: 0n, maxDeposits: deposits });
       report.expect(
         pushed.refunded === BigInt(payers.length - 1),
-        `pushed ${pushed.refunded} refund(s), skipping the deposit already claimed - ${pushed.gasUsed} gas`,
+        `pushed ${pushed.refunded} of ${deposits} deposit(s), skipping the one already ` +
+          `claimed - ${pushed.gasUsed} gas`,
         `refundAll refunded ${pushed.refunded}, expected ${payers.length - 1}`,
       );
 

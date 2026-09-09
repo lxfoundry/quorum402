@@ -119,6 +119,11 @@ const GAS = {
   // contract that burns gas in its `receive()` is what `refundAll`'s window exists to step
   // over, and stepping over it is the caller's move, not a larger number here.
   claimRefund: 300_000,
+  // The one limit here that does not scale with what it is asked to do: `refundAll` takes a
+  // caller-chosen window and this is flat. It is sized for the windows this project drives -
+  // a pool's worth of deposits, single figures - where a refund costs tens of thousands of gas.
+  // A caller passing a window in the hundreds has to raise it, and `maxDeposits` is precisely
+  // what makes that the caller's problem to size rather than this constant's.
   refundAll: 500_000,
 } as const;
 
@@ -240,8 +245,10 @@ export class PoolsClient {
    * recipient of anything.
    *
    * Drive it by advancing `startIndex` a window at a time until it passes `depositCount`, not
-   * by calling until it returns zero - the contract's own note on why. Returns how many
-   * deposits this call refunded, which on a window of already-refunded rows is legitimately 0.
+   * by calling until it returns zero - the contract's own note on why. That instruction is
+   * followable from here: `depositCount` is on this client for no other reason. Returns how
+   * many deposits this call refunded, which on a window of already-refunded rows is
+   * legitimately 0.
    */
   async refundAll(params: {
     poolId: bigint;
@@ -306,6 +313,23 @@ export class PoolsClient {
       state,
       resourceUrl: raw.resourceUrl,
     };
+  }
+
+  /**
+   * How many deposits a pool has recorded, counted and late alike.
+   *
+   * The bound `refundAll`'s window is driven against, and the only reason this is here - the
+   * contract says to advance `startIndex` until it passes this number, and a caller that could
+   * not read it had to call `depositAt` until it reverted instead. The index is no substitute:
+   * the subgraph's `Pool` carries `seats`, which counts only the deposits that took one, and a
+   * window sized from that would stop short of every late deposit - the rows that are
+   * refundable in *every* state, and the ones most likely to be waiting.
+   *
+   * Reverts `NoSuchPool` above `poolCount`, so callers bound the id first.
+   */
+  async depositCount(poolId: bigint): Promise<bigint> {
+    const args = new ContractFunctionParameters().addUint256(long(poolId));
+    return BigInt((await this.queryUint256("depositCount", args)).toFixed());
   }
 
   /**
