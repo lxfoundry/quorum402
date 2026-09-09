@@ -157,6 +157,55 @@ clone, not from a developer's machine.
 # TODO
 ```
 
+## The demo UI
+
+`npm run demo` serves a page that drives the whole primitive in a browser — one seller and three
+buyers, a handful of clicks each.
+
+```bash
+npm run demo          # then open http://localhost:4021/ui
+```
+
+> 🔴 **`npm run demo` is not the process to deploy.** It signs with the buyer keys in
+> `.accounts.json`, so anything that can reach it can spend those accounts — and because a pool
+> takes one seat per address, a passer-by filling a pool consumes the demonstration too. The
+> coordinator meant for a host is **`npm run server`**, which mounts none of it. The separation is
+> two entry points rather than a runtime flag, so there is no switch to leave in the wrong
+> position.
+
+It mounts three things on one port:
+
+| Path | What |
+|---|---|
+| `/ui` | the page — plain HTML and one `.js` file. No framework, no bundler, no build step |
+| `/demo` | the control plane the page posts to, and the only thing holding a key |
+| `/` | the coordinator itself — `createApp`, mounted last and unchanged |
+
+So `GET /benchmark/:slug` is answered by exactly the code in [src/server/index.ts](src/server/index.ts),
+and a buyer's payment is a real HTTP round trip into it. Nothing is reimplemented for the page:
+paying calls the same [`buySeat`](src/buyer/agent.ts) the CLI calls, and redeeming calls the same
+`redeemSeat` with the settlement that payment returned — which is what §8 asks a payer to present.
+
+What it shows that a terminal does not:
+
+- **the crowd filling one pool** — the seat bar, the threshold, and the deadline counting down
+- **the protocol**, in a log along the bottom. The seat counter climbing through each `402`, and
+  the `202` that exists nowhere else in x402, and the `200` that arrives for whichever buyer
+  completes the crowd
+- **what a seat is worth after payment** — a receipt, then the badge that says The Graph has
+  indexed the deposit, which is what makes it redeemable at all (§8 step 4)
+- **the refund path** — an expired pool, and `claimRefund` called from the payer's own account,
+  with the coordinator not involved (§9)
+
+A buyer never chooses a pool, and the page does not pretend otherwise: nothing in the `quorum`
+exchange carries a pool id, so what a buyer picks is a **service**, and the card shows the pool
+`sellingPoolFor` would actually put the money in.
+
+Which coordinator the pools name is `PUBLIC_BASE_URL`'s business. Left unset, everything runs in
+the one process. Pointed at a deployed coordinator, the seller opens pools naming it and the
+buyers pay it over the network — the page stays local, and the browser never talks to the
+coordinator directly, so no CORS is involved either way.
+
 ## Verifying it end to end
 
 `npm test` proves the parts: the contract's arithmetic on an in-process EVM, and the scheme's
@@ -251,6 +300,9 @@ src/
 scripts/      deployment, the demo, and checks against Hedera testnet that anyone can re-run
   e2e/        the end-to-end runs: a crowd fills one pool and the seller is paid, and a crowd
               that falls one seat short is refunded to the tinybar
+  demo/       the browser demo - the wallets it switches between, which button a seat earns,
+              and the control plane behind /ui. Holds keys; never deploy it
+public/       the demo page: one HTML file and one .js file, no build step
 deployments/  what is deployed where, and the hash that proves it is this code
 subgraph/     the subgraph, and the graph-node that has to run it - see subgraph/README.md
 test/         contract tests, run on a local EVM pinned to Hedera's target

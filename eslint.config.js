@@ -46,6 +46,20 @@ export default tseslint.config(
   },
   {
     /**
+     * The demo page runs in a browser, not in Node.
+     *
+     * It is plain JavaScript on purpose - no bundler, no build step, nothing to go wrong between
+     * saving a file and reloading a tab - so it is linted here rather than compiled anywhere.
+     * Without this it is checked against Node's globals and every `document` is an undefined
+     * variable.
+     */
+    files: ["public/**/*.js"],
+    languageOptions: {
+      globals: globals.browser,
+    },
+  },
+  {
+    /**
      * One type-aware rule, for `scripts/` only.
      *
      * The blanket reasoning above holds - `tsc` catches most of what these rules would, a step
