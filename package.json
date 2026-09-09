@@ -13,6 +13,7 @@
     "typecheck:ts": "tsc --noEmit",
     "build": "hardhat build",
     "test": "hardhat test",
+    "e2e": "tsx scripts/e2e/index.ts",
     "lint": "npm run lint:sol && npm run lint:ts",
     "lint:sol": "solhint --max-warnings 0 \"contracts/**/*.sol\"",
     "lint:ts": "eslint . --max-warnings 0",

@@ -157,6 +157,47 @@ clone, not from a developer's machine.
 # TODO
 ```
 
+## Verifying it end to end
+
+`npm test` proves the parts: the contract's arithmetic on an in-process EVM, and the scheme's
+status table over a real listener with the chain, the facilitator and the index all stubbed.
+Nothing in it touches a network, and nothing in it makes several distinct buyers fill one pool.
+
+`npm run e2e` does. It opens a pool on the deployed contract, has three separate accounts buy
+seats through the coordinator, waits for the subgraph, redeems a seat against a signature, and
+releases the pool to its recipient — all on Hedera testnet, settled through Blocky402.
+
+```bash
+npm run e2e -- --check   # preflight only: config, reachability, balances. Spends nothing
+npm run e2e              # the full run, about 40 seconds
+```
+
+It needs `.env` filled in (including `SUBGRAPH_URL`) and a `.accounts.json` holding at least
+four accounts — `npm run accounts:create -- 4`. The preflight checks every balance first and,
+if one is short, prints the account id to paste into
+[the faucet](https://portal.hedera.com/faucet) rather than failing partway through a run.
+
+A run costs the seat price times three, plus gas — about 0.3 HBAR at the default 0.1 HBAR
+seat. Use `--seat` to change it; the price is a property of the pool, written on-chain at
+creation, so it changes what a run costs and nothing about what it proves.
+
+What it asserts, in order:
+
+| | |
+|---|---|
+| **402 → 202 → 200** | the first two buyers settle and are told the resource is still pending; the third fills the pool and receives it |
+| the licence | the resource served names this run's pool, not a previous one |
+| the money in | the contract's balance rose by exactly three seats |
+| the index | the subgraph placed the settlement, which is the only place a transaction id survives |
+| redemption | a payer turns a settlement id and a private key back into the resource |
+| **the impostor** | a second buyer presenting the first's settlement is refused **403** — a seat belongs to the payer, not to whoever holds the receipt |
+| the money out | the recipient received exactly three seats, and the contract's commitments fell by the same |
+
+Each run opens its own pool on an ephemeral port, so the resource URL it sells is one no
+earlier pool can name — the licence row above asserts exactly that. The rest of the isolation is
+a design property rather than a measured one: concurrent runs should not interfere, and a run
+that dies should leave behind only a pool that expires into refundable. Neither has been tested.
+
 ## Demo
 
 TODO — video link.
@@ -176,6 +217,7 @@ src/
   buyer/      a buyer that answers a quorum 402 with no human in the loop
   benchmark/  the resource being sold, and why one buyer cannot buy it alone
 scripts/      deployment, the demo, and checks against Hedera testnet that anyone can re-run
+  e2e/        the end-to-end run: a crowd fills one pool, a seat is redeemed, the seller is paid
 deployments/  what is deployed where, and the hash that proves it is this code
 subgraph/     the subgraph, and the graph-node that has to run it - see subgraph/README.md
 test/         contract tests, run on a local EVM pinned to Hedera's target
