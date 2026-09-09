@@ -10,8 +10,13 @@
  * facilitator, waits for the real index, and checks what came back. Run it before merging, and
  * as the rehearsal for the video.
  *
- * Run: npm run e2e                     # the full scenario
+ * There are two scenarios and both run by default, because the primitive is an all-or-nothing
+ * one and a run that only ever proves the "all" half has demonstrated the easy direction. The
+ * crowd arrives, or the crowd falls one seat short and everybody is refunded.
+ *
+ * Run: npm run e2e                     # both scenarios
  *      npm run e2e -- --check          # preflight only; spends nothing
+ *      npm run e2e -- --scenario met   # just the crowd that arrived - the quick one
  *      npm run e2e -- --seat 0.25      # a different seat price
  */
 import { benchmarkFor } from "../../src/benchmark/catalogue.js";
@@ -23,6 +28,7 @@ import type { GeneratedAccount } from "../create-accounts.js";
 import { Reporter, hbar } from "./harness.js";
 import { preflight } from "./preflight.js";
 import { quorumMet } from "./quorum-met.js";
+import { MISSED_TTL_SECONDS, quorumMissed } from "./quorum-missed.js";
 
 /** The cut the run sells. Its `minimumContributors` is the pool's threshold. */
 const SLUG = "agent-spend-eu";
@@ -38,23 +44,30 @@ const SLUG = "agent-spend-eu";
 const DEFAULT_SEAT_HBAR = "0.1";
 
 /**
- * How long the pool stays open.
+ * How long a met pool stays open.
  *
  * Long enough for three settlements and an index round trip, short enough that a run killed
  * halfway leaves a pool that expires into refundable rather than one that sits open for hours.
+ * It is a ceiling: the met run never waits for it. The missed run is the opposite - there the
+ * deadline is the thing being demonstrated, so it names a much shorter one of its own.
  */
-const DEFAULT_TTL_SECONDS = 600;
+const MET_TTL_SECONDS = 600;
+
+/** Which run, or both. */
+export type Scenario = "met" | "missed" | "both";
 
 interface Args {
   check: boolean;
   seatHbar: string;
-  ttl: number;
+  /** Unset unless asked for, so each scenario can keep its own default. */
+  ttl?: number;
+  scenario: Scenario;
   buyers?: string[];
   recipient?: string;
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { check: false, seatHbar: DEFAULT_SEAT_HBAR, ttl: DEFAULT_TTL_SECONDS };
+  const args: Args = { check: false, seatHbar: DEFAULT_SEAT_HBAR, scenario: "both" };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case "--check":
@@ -69,6 +82,14 @@ function parseArgs(argv: string[]): Args {
           throw new Error("--ttl must be a whole number of seconds, at least 60");
         }
         break;
+      case "--scenario": {
+        const named = argv[++i];
+        if (named !== "met" && named !== "missed" && named !== "both") {
+          throw new Error(`--scenario must be met, missed or both, not "${named}"`);
+        }
+        args.scenario = named;
+        break;
+      }
       case "--buyers":
         args.buyers = (argv[++i] ?? "").split(",").filter(Boolean);
         break;
@@ -155,13 +176,24 @@ async function main(): Promise<number> {
 
   const threshold = benchmark.minimumContributors;
   const { buyers, recipient } = cast(args, cfg.network, cfg.operatorId, threshold);
+  const runs: Exclude<Scenario, "both">[] =
+    args.scenario === "both" ? ["met", "missed"] : [args.scenario];
 
   console.log(`\nquorum402 end-to-end - ${benchmark.id}\n`);
-  report.info(`${threshold} seats at ${hbar(seatPriceTinybars)}, pool open for ${args.ttl}s`);
+  report.info(`${threshold} seats at ${hbar(seatPriceTinybars)}`);
   report.info(`buyers    ${buyers.map((b) => b.label).join(", ")}`);
   report.info(`recipient ${recipient.label}`);
+  report.info(`scenarios ${runs.join(" then ")}`);
 
-  const ready = await preflight(report, { cfg, buyers, recipient, seatPriceTinybars });
+  const ready = await preflight(report, {
+    cfg,
+    buyers,
+    recipient,
+    seatPriceTinybars,
+    // The missed run has a payer pull its own refund, and a payer paying for its own
+    // transaction is the only thing in either scenario that spends a buyer's gas.
+    claimsRefund: runs.includes("missed"),
+  });
   if (!ready) {
     console.log("\npreflight failed - nothing was spent\n");
     return report.failures;
@@ -174,23 +206,41 @@ async function main(): Promise<number> {
   const contractId = readDeployment(caip2(cfg.network))?.contractId;
   if (!contractId) throw new Error("preflight passed without a deployment, which cannot happen");
 
-  await quorumMet(report, {
-    cfg,
-    benchmark,
-    contractId,
-    buyers,
-    recipient,
-    seatPriceTinybars,
-    ttlSeconds: args.ttl,
-  });
+  const players = { cfg, benchmark, contractId, buyers, recipient, seatPriceTinybars };
+  for (const run of runs) {
+    console.log(`\n\n=== ${HEADLINE[run]} ===`);
+    // Each scenario opens its own pool on its own port and asserts against balances it read
+    // itself, so a failure in the first does not invalidate the second - and on a path costing
+    // minutes and real HBAR, both answers are worth having from one invocation.
+    if (run === "met") {
+      await quorumMet(report, { ...players, ttlSeconds: args.ttl ?? MET_TTL_SECONDS });
+    } else {
+      await quorumMissed(report, { ...players, ttlSeconds: args.ttl ?? MISSED_TTL_SECONDS });
+    }
+  }
 
   console.log(
     report.failures === 0
-      ? "\na crowd answered one 402 together, and the seller was paid\n"
+      ? `\n${VERDICT[args.scenario]}\n`
       : `\nFAILED with ${report.failures} problem(s)\n`,
   );
   return report.failures;
 }
+
+/** What a run is about to demonstrate, said before it starts spending. */
+const HEADLINE: Record<Exclude<Scenario, "both">, string> = {
+  met: "the crowd arrives",
+  missed: "the crowd falls one seat short",
+};
+
+/** And what it demonstrated, said once at the end. */
+const VERDICT: Record<Scenario, string> = {
+  met: "a crowd answered one 402 together, and the seller was paid",
+  missed: "the crowd fell short, and every payer got their money back",
+  both:
+    "a crowd answered one 402 together and the seller was paid - and when it fell one seat " +
+    "short, every payer got their money back instead",
+};
 
 main().then(
   (failures) => process.exit(failures === 0 ? 0 : 1),
