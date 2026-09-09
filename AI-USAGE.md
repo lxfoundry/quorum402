@@ -51,6 +51,7 @@ was rejected.
 | 2026-09-08 | The coordinator over HTTP (`src/server/index.ts`, `src/buyer/agent.ts`) | Wrote the §6 lifecycle, the receipt, the buyer that answers a 402 on its own, and tests driving every status-table row over a real listening server with the chain stubbed | Approved the testnet spend and set its bound. Called for a seller account distinct from the coordinator, which ADR 0003 assumes and a pool paying its own coordinator would not have shown |
 | 2026-09-09 | Receipt redemption (`src/server/redeem.ts`, `src/x402/redemption.ts`, `src/graph/client.ts`) | Wrote §8's canonical message and its verifier, the subgraph client the lookup needs, and the buyer's redemption path; checked every GraphQL query against the live index before building on it | Required that the index resolve only a *position*, with `payer` and `counted` read back from the contract — an indexer must not be able to make a seat valid. Rejected folding two new refusals into §6's catch-all 401, since a payer can act on only one of the three |
 | 2026-09-09 | The refund path, end to end (`scripts/e2e/quorum-missed.ts`, `src/pool/client.ts`) | Found that the contract's two refund methods had no caller anywhere above Solidity, added them to the pool client, and wrote the scenario that drives a pool past its deadline one seat short and refunds both payers on testnet | Chose to spend the remaining build time proving the failure path rather than finishing the README, on the grounds that a demo of an all-or-nothing primitive that only ever shows the *all* has shown the easy half. Called for both of §9's reversal paths in one run rather than the cheaper one, since they exist for different people |
+| 2026-09-09 | Hosting the coordinator (`Dockerfile`, `fly.toml`) | Read the image's failure mode out of the code before building it — the ABI is loaded lazily from `artifacts/`, which is gitignored, so an image built without `npm run build` starts, passes its health check and fails on the first request that touches the chain — then wrote the container, the app config and the README's walkthrough of the live 402 | Asked for the server to be reachable rather than demonstrated from a laptop, on the same grounds the subgraph moved: a 402 nobody can curl is a claim, not a demonstration. Approved opening a pool against the public origin, so what is hosted has something to sell |
 
 ## 4. What was done without AI
 
@@ -351,6 +352,17 @@ passed on its first run against testnet, which is worth recording precisely beca
 evidence of much: every mechanism it drives was already exercised somewhere, and what was
 missing was never a mechanism. It was the choreography, and the choreography is the part a unit
 test is defined not to have.
+
+**2026-09-09 — wrote a broken command into the README while documenting a working one.**
+The paragraph explaining how to decode the `PAYMENT-REQUIRED` header shipped a
+`curl | sed | tr | base64 -d` pipeline that had been run in a terminal first and then
+corrupted on the way into the file: the carriage-return escape and the line continuation
+were both eaten, leaving a `tr -d` with a real newline inside its quotes. Markdown renders
+that as a plausible two-line command, so it is invisible in every view except the file's own
+bytes. Rewritten to need no escapes at all — `tr -dc` with the base64 alphabet keeps the
+payload and drops everything else — which is the better command as well as the safer one to
+write down. The general form: a command that was verified in a shell but never run *out of
+the file* is untested, and the README is the artifact a judge runs.
 
 ## 6. Review, and what it caught
 
