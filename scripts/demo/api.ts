@@ -141,10 +141,14 @@ async function stateFor(
   const wallet = label ? ctx.wallets.find(label) : undefined;
   const now = Math.floor(Date.now() / 1000);
 
+  // A seller's screen has no seat list on it - `sellerPanels` renders the pool-opening form
+  // instead - so asking the index for one would be a subgraph round trip per poll, all the way
+  // through the half of the demo where nobody has bought anything yet.
+  const mine = wallet && wallet.role !== "seller" ? wallet : undefined;
   const [services, held, seats] = await Promise.all([
     servicesFor(ctx, pools, now),
     balances.all(),
-    wallet ? seatsFor(ctx, pools, wallet.evmAddress, wallet.label, now) : Promise.resolve([]),
+    mine ? seatsFor(ctx, pools, mine.evmAddress, mine.label, now) : Promise.resolve([]),
   ]);
 
   return {
@@ -507,6 +511,10 @@ class PoolStatusCache {
     // string is one more thing that can be got backwards.
     const value = await this.ctx.coordinator.deps.registry.sellingPoolFor(resourceUrl);
     this.advertisedByUrl.set(resourceUrl, { at: Date.now(), value });
+    // The advertised pool is almost always one a buyer also holds a seat in, and this read
+    // answers the seat list's question too. Recording it here means the pool on screen is read
+    // once per poll rather than once for each panel showing it.
+    if (value) this.remember(value);
     return value;
   }
 
@@ -528,26 +536,30 @@ class PoolStatusCache {
     if (hit && (hit.terminal || Date.now() - hit.at < POOL_CACHE_MS)) return hit.value;
 
     try {
-      const availability = await this.ctx.coordinator.deps.registry.availability(BigInt(poolId));
-      // The **stored** state, so lazy expiry stays visible: `seats.ts` resolves it against the
-      // deadline, and handing it the already-resolved one would hide the disagreement.
-      const value: LivePool = {
-        state: availability.terms.state,
-        seats: availability.terms.seats,
-      };
-      // Terminal is judged on the **stored** state, not the lazily-resolved one. A pool past its
-      // deadline that nobody has stamped answers `Expired` from `statusOf` while its storage
-      // still says `Open`, and freezing it there would keep reporting it unstamped after a
-      // refund had stamped it. Once storage agrees, nothing can move it again.
-      const terminal =
-        availability.terms.state === "Released" || availability.terms.state === "Expired";
-      this.liveById.set(poolId, { at: Date.now(), terminal, value });
-      return value;
+      return this.remember(await this.ctx.coordinator.deps.registry.availability(BigInt(poolId)));
     } catch (error) {
       // A read that failed is not a fact about the pool. Fall back to whatever the index said.
       console.error(`pool ${poolId} could not be read: ${String(error)}`);
       return hit?.value;
     }
+  }
+
+  /** File one chain read under its pool id, whichever question prompted it. */
+  private remember(availability: PoolAvailability): LivePool {
+    // The **stored** state, so lazy expiry stays visible: `seats.ts` resolves it against the
+    // deadline, and handing it the already-resolved one would hide the disagreement.
+    const value: LivePool = {
+      state: availability.terms.state,
+      seats: availability.terms.seats,
+    };
+    // Terminal is judged on the **stored** state, not the lazily-resolved one. A pool past its
+    // deadline that nobody has stamped answers `Expired` from `statusOf` while its storage
+    // still says `Open`, and freezing it there would keep reporting it unstamped after a
+    // refund had stamped it. Once storage agrees, nothing can move it again.
+    const terminal =
+      availability.terms.state === "Released" || availability.terms.state === "Expired";
+    this.liveById.set(availability.terms.poolId.toString(), { at: Date.now(), terminal, value });
+    return value;
   }
 }
 
@@ -559,7 +571,7 @@ class BalanceCache {
   constructor(private readonly ctx: DemoContext) {}
 
   async all(): Promise<Map<string, bigint>> {
-    if (Date.now() - this.at < BALANCE_CACHE_MS && this.value.size > 0) return this.value;
+    if (Date.now() - this.at < BALANCE_CACHE_MS) return this.value;
     const { cfg } = this.ctx.coordinator;
     const wallets = this.ctx.wallets.all();
     const balances = await Promise.all(
