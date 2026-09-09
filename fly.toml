@@ -51,6 +51,10 @@ primary_region = "ams"
   # that takes fifteen seconds to answer its first 402 looks broken rather than asleep.
   auto_stop_machines = false
   min_machines_running = 1
+  # `min_machines_running` is a floor, not a count: a first deploy creates two machines for
+  # high availability regardless. One is enough here and keeps the failure log - the only
+  # thing this server writes that nothing else can reconstruct - in one place, so the app runs
+  # at `fly scale count 1`. Pass `--ha=false` to skip the second machine on a fresh app.
 
   # `/healthz` answers from configuration alone and touches no network. That is the right
   # check for this: an unreachable mirror node or a facilitator having a bad afternoon is not
