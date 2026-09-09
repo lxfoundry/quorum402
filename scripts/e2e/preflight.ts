@@ -39,7 +39,7 @@ const PROBE = "preflight-probe";
  *
  * Five state-changing calls - `createPool`, one `recordDeposit` per buyer, `release` - plus the
  * view queries the server makes per request, which the SDK caps at 1 HBAR each. Observed cost
- * is a small fraction of this. The floor is not a estimate of the bill; it is the point at
+ * is a small fraction of this. The floor is not an estimate of the bill; it is the point at
  * which failing up front beats discovering the shortfall after two buyers have already paid.
  */
 const OPERATOR_FLOOR = hbarToTinybars("15");
