@@ -208,15 +208,28 @@ export async function quorumMissed(report: Reporter, params: ScenarioParams): Pr
       report.step("the deadline passes");
       await awaitDeadline(report, deadline);
 
-      // Nothing has been called on this pool. `statusOf` resolves the deadline live, which is
-      // the whole of ADR 0004's lazy expiry - the pool is expired because the clock says so,
-      // not because anyone remembered to say so. The index cannot see this yet, and
-      // `schema.graphql` says so rather than pretending otherwise.
+      // ADR 0004's lazy expiry, in the only window where it is visible. `statusOf` resolves the
+      // deadline live and `poolOf` hands back what is stored, so the two disagree exactly while
+      // a pool is past its deadline and unstamped - which is what both are read for here.
+      //
+      // `statusOf` alone would have said nothing about the clock. An implementation with a
+      // keeper eagerly stamping every pool it passes answers `Expired` here too, identically,
+      // and that keeper is the thing ADR 0004 argues is not needed. The disagreement is the
+      // evidence; either answer on its own is consistent with the design it rejects.
+      //
+      // The index cannot see this yet, and `schema.graphql` says so rather than pretending
+      // otherwise - nothing was emitted, because nothing happened.
       const state = await pools.statusOf(poolId);
+      const stored = (await pools.poolOf(poolId)).state;
       report.expect(
         state === "Expired",
-        `pool ${poolId} reads Expired, and nothing has stamped it`,
+        `pool ${poolId} reads Expired`,
         `pool ${poolId} reads ${state} after its deadline, expected Expired`,
+      );
+      report.expect(
+        stored === "Open",
+        `and is stored ${stored} - nothing stamped it, the clock decided on its own`,
+        `pool ${poolId} is stored ${stored}, so something stamped it before this read`,
       );
 
       // §6 row 1. A closed pool is not an open pool naming this URL, so a buyer arriving late is

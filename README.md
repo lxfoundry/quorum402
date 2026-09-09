@@ -215,7 +215,7 @@ whose failure a payer most needs protection from is the one that failed to sell 
 |---|---|
 | **402 → 202, twice** | both buyers settle for real and are told the resource is still pending |
 | one seat short | the pool reads back **two of three seats taken** — two payments that took no seat would leave it just as `Open`, and the whole scenario rests on the difference |
-| lazy expiry | past its deadline the pool reads `Expired` with nothing having stamped it — the clock decides, not a keeper |
+| lazy expiry | past its deadline `statusOf` reads `Expired` while the pool is still *stored* `Open` — the two disagree only in that window, which is how the run shows the clock decided and no keeper stamped anything |
 | **the latecomer** | the third buyer is refused **404** before it builds a payment: the coordinator stops selling half a minute before it stops being able to deliver, so the money is never taken |
 | **the expired seat** | the payer redeeming is refused **409 `pool-expired`** — and told the contract and method to reclaim at, which is the whole of what a coordinator owes a pool it could not fill |
 | the pull | `claimRefund`, signed with the payer's own key, returns exactly one seat |
