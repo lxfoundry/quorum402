@@ -44,7 +44,14 @@ async function refresh() {
   if (polling) return;
   polling = true;
   try {
-    state = await api(`state${wallet ? `?wallet=${encodeURIComponent(wallet)}` : ""}`);
+    // Bounded, because `polling` is only cleared in `finally`: a request that never settles -
+    // a stalled mirror-node connection rather than a refused one - would leave the guard set
+    // and the page would stop updating until it was reloaded. Only this poll takes a deadline.
+    // The action POSTs sign and settle real transactions, and are allowed to take as long as
+    // they take.
+    state = await api(`state${wallet ? `?wallet=${encodeURIComponent(wallet)}` : ""}`, {
+      signal: AbortSignal.timeout(POLL_MS * 3),
+    });
     render();
   } catch (error) {
     console.error(error);
