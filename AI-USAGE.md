@@ -555,3 +555,53 @@ than that second does not produce a flaky assertion — the `claimRefund` after 
 revert throws, and the scenario unwinds before `refundAll` runs, leaving both deposits in the
 contract with nothing left in the run to push them back out. The cost of the assumption was not
 the assertion it broke but the four steps behind it that never got to run.
+
+---
+
+### A cleanup pass over the demo UI, 2026-09-09
+
+The demo-UI branch was reviewed again after it merged, this time by four Claude Code agents run
+in parallel and told explicitly *not* to look for bugs: one each for duplication, unnecessary
+complexity, wasted work, and whether a fix sat at the right depth. They were given the diff and
+the tree, not the conversation. Nine commits came out of it.
+
+The finding worth recording is the one the code had already claimed was impossible. `poolSummary`
+had been exported the week before, carrying a comment that it was exported *"because the demo UI
+renders the same six facts and inventing a second shape for them would let the two drift"* — and
+nothing ever imported it. The demo rebuilt all six fields by hand in the same branch. Three of
+the four agents found it independently, which is the only reason it is here: it is invisible to
+every tool in the repo, because an unused export and a hand-written object are both perfectly
+legal. The comment was not aspirational when it was written; it was false when it was written.
+
+That is the same category this file has been recording since the contract review — prose
+asserting a property nothing reached — but a step worse than the earlier cases. Those were specs
+describing a contract, two visibly separate artifacts. This was a doc comment on the function
+itself, written in the commit that made it untrue, and it read as evidence that the sharing had
+happened. A reader chasing "where does the page get its pool shape from" would have followed it
+to a dead end and concluded the question was answered.
+
+The other substantive finding was waste rather than wrongness, which is why nothing caught it
+either. `PoolRegistry.scan()` advanced its cursor only after every read resolved, so two lookups
+entering together both read forward from the same point and filed every pool id twice. Nothing
+resolved to the wrong pool — the ordering survives duplication — so no test could have failed.
+It only ever cost paid contract queries, permanently, and the page that asks about every
+benchmark at once triggers it on the first poll. A test now pins it, and it was confirmed to fail
+without the fix before being kept.
+
+**What the reviewers got wrong.** Line numbers, routinely — one cited a symbol at line 458 of a
+145-line file, and several anchors were off by enough that every finding had to be re-verified
+against the file before it could be acted on. More instructive: one agent argued the pool cache's
+three-second TTL "can never hit" because the page polls every four seconds. The arithmetic is
+right and the conclusion is wrong — the cache exists to stop one poll reading the same pool once
+per panel, not to serve the next poll — so the recommendation would have made a live demo staler
+to fix a problem that was not there. Two agents, ranked high and independently, also proposed
+preferring the chain's resolved state over the locally-derived one. That is a real inconsistency
+and possibly worth doing, but it changes which clock decides that a pool has expired; it was
+filed as a cleanup and it is not one.
+
+The pattern across the four: agents told to find quality problems will find them, and the cost of
+that is not false positives so much as **confidently-argued changes to intended behaviour,
+presented in the same register as a dead-code removal.** Four of the fourteen findings applied
+were skipped for exactly that reason and are written down in the pull request rather than
+silently dropped. The reviews were worth running — three of them converged on the export nobody
+used — but none of the fourteen was safe to apply on the strength of the report alone.
