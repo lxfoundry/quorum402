@@ -393,3 +393,28 @@ twice — and it already was, live. It had also never set an operator on its Hed
 the command failed before reaching its own logic. The second bug hid the first: a script that
 cannot run cannot be observed picking the wrong pool. Both were found by running it against
 testnet rather than by reading it, which is the only way either would have surfaced.
+
+A second pass over the same branch asked four reviewers a different question — not "is this
+correct" but "is this *well built*": one each on reuse, unnecessary complexity, wasted work, and
+whether each fix sat at the right depth. They ran independently and did not see each other's
+findings.
+
+The overlap is the interesting part. Three of the four independently arrived at the same place
+from different directions: the reuse reviewer found the refund selector and a base64 codec each
+written twice more; the simplification reviewer found four configuration knobs nothing sets, an
+index result with two fields nothing reads, and a dead client method; the altitude reviewer found
+that the "a read that failed is not a fact about the receipt" rule had been applied to four reads
+and missed the fifth. Different lenses, one underlying habit — **surface added in anticipation of
+a caller that never arrived, and a rule stated in more places than it was applied**.
+
+The efficiency reviewer found the sharpest single thing, and it was a comment that had become a
+lie. `redeem.ts` said expiry was checked first "so a stale receipt costs two network reads less
+than a fresh one" — and the wiring around it had since put three paid contract queries ahead of
+the clock. The check was in the right order inside the function and the wrong order in the
+system, which is a distinction no amount of reading that file would surface.
+
+Worth naming: two of these findings were repairs to fixes made earlier the same day. Work done
+under review pressure goes deep enough on the thing being pointed at and stops there — the 503
+rule was applied to every read the reviewer had listed and to none it had not. That is not a
+failure of care; it is what "address the feedback" tends to mean in practice, and it is a reason
+to re-read a fix after the pressure is off.
