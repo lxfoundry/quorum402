@@ -241,9 +241,9 @@ whose ordinary cause is an index a second behind the settlement that just funded
 server SHOULD report how far the index has got and a client SHOULD retry rather than conclude its
 payment never happened.
 
-**503 is the fourth, and it is not about the receipt at all.** Redemption reads an index and a
-contract, and either can be unreachable, slow past its timeout, or — where the index names a row
-consensus does not have — wrong. A server that let those surface as 404 would tell a payer holding
+**503 is the fourth, and it is not about the receipt at all.** Redemption reads the pool, the
+ledger, the index and the contract, and any of them can be unreachable, slow past its timeout, or
+— where the index names a row consensus does not have — wrong. A server that let those surface as 404 would tell a payer holding
 a good seat that their payment does not exist; one that let them surface as 500 would say nothing
 at all. **The distinction a server MUST preserve is between a fact about the pool and a fact about
 itself.** It SHOULD carry `Retry-After`, and it MUST NOT return the underlying failure to the
@@ -491,9 +491,10 @@ sequenceDiagram
     Note over RS,P: no pool of this URL bears the receipt's id → 401, the same<br/>answer as a bad signature: which pools exist is not disclosed here
     RS->>P: poolOf, statusOf — the named pool's terms and live state
     P-->>RS: read once, and carried through every check below
+    Note over RS,P: either contract read fails → 503, never 401 or 404 — the<br/>same rule the ledger and the index are held to below
 
     rect rgba(120, 160, 255, 0.12)
-        Note over RS,M: rules 2-3 — proof before deposit, and nothing looked up in here
+        Note over RS,M: rules 2-3 — proof before deposit: no deposit is touched in here
         RS->>M: rule 2 · account's public key and network EVM address
         M-->>RS: key{type, hex}, evmAddress
         Note over RS,M: no key that can sign — threshold key, key list,<br/>contract account → 401. The account cannot be seated,<br/>and no re-signing would change that
@@ -503,10 +504,10 @@ sequenceDiagram
 
     rect rgba(80, 200, 120, 0.14)
         Note over RS,P: rule 4 — the index gives a position, the contract answers for the row
-        RS->>G: deposit where pool = poolId and hederaTxId = transaction
+        RS->>G: deposit where pool = poolId and hederaTxId = transaction,<br/>and _meta.block.number in the same query
+        Note over RS,G: one round trip. The head only annotates a refusal, so an index<br/>that places the deposit and cannot report its own head has still answered
         alt no such row
-            G-->>RS: nothing
-            RS->>G: _meta.block.number
+            G-->>RS: nothing, and how far the index has read
             RS-->>B: 404 + indexedBlock — never settled, or not indexed yet
         else found
             G-->>RS: depositId
