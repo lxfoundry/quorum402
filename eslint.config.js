@@ -10,6 +10,8 @@ import tseslint from "typescript-eslint";
  * The type-aware rule sets are deliberately not enabled. They need the TypeScript program
  * built for every run, which is the slowest thing in CI, and what they would catch is
  * mostly what `tsc --noEmit` already catches a step earlier.
+ *
+ * `scripts/` gets one of them anyway, for the reason at the bottom of this file.
  */
 export default tseslint.config(
   {
@@ -41,5 +43,31 @@ export default tseslint.config(
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
       ],
     },
+  },
+  {
+    /**
+     * One type-aware rule, for `scripts/` only.
+     *
+     * The blanket reasoning above holds - `tsc` catches most of what these rules would, a step
+     * earlier and faster. This one is the exception because it catches something `tsc` cannot
+     * object to: testing an always-present value for truthiness is perfectly well typed, and
+     * silently always true. A function that widens its return type from `T | undefined` to an
+     * object leaves every `if (result)` behind it reading as a check and behaving as a
+     * straight line.
+     *
+     * `scripts/` is where that goes unnoticed. It is the only directory with no tests, and its
+     * callers are the last thing a change to `src/` is checked against - so the compiler, the
+     * suite and the reviewer's diff all miss the same defect in the same place. That is not
+     * hypothetical: it is exactly how the demo command came to redeem against the wrong pool
+     * and report a good seat as unindexed.
+     *
+     * Costs about six seconds, and only when `scripts/` is linted.
+     */
+    files: ["scripts/**/*.ts"],
+    extends: [tseslint.configs.base],
+    languageOptions: {
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+    },
+    rules: { "@typescript-eslint/no-unnecessary-condition": "error" },
   },
 );
