@@ -22,9 +22,9 @@ import { FailureReporter } from "../../src/server/failures.js";
 import { PoolRegistry } from "../../src/server/pools.js";
 import type { ServerDeps } from "../../src/server/index.js";
 import { Facilitator } from "../../src/x402/facilitator.js";
-import { buySeat } from "../../src/buyer/agent.js";
+import { buySeat, redeemSeat } from "../../src/buyer/agent.js";
 import type { GeneratedAccount } from "../create-accounts.js";
-import { hbar, startCoordinator } from "./harness.js";
+import { awaitIndexed, hbar, startCoordinator } from "./harness.js";
 import type { Reporter } from "./harness.js";
 
 export interface ScenarioParams {
@@ -56,6 +56,11 @@ export async function quorumMet(report: Reporter, params: ScenarioParams): Promi
       evmAddressOf(cfg.mirrorUrl, recipient.accountId),
     ]);
 
+    // Preflight refuses to pass without it, because redemption is half of what this run
+    // proves and a coordinator with no index answers it 501.
+    if (!cfg.subgraphUrl) throw new Error("SUBGRAPH_URL is unset");
+    const graph = new GraphClient({ url: cfg.subgraphUrl });
+
     // Built exactly as `main()` builds it - the same registry, the same facilitator client, the
     // same mirror reads. A scenario that assembled a different server would be testing a
     // different server.
@@ -73,7 +78,7 @@ export async function quorumMet(report: Reporter, params: ScenarioParams): Promi
       coordinatorAddress,
       accountOf: (accountId) => accountOf(cfg.mirrorUrl, accountId),
       coordinatorBalanceTinybars: () => balanceTinybars(cfg.mirrorUrl, cfg.operatorId),
-      index: cfg.subgraphUrl ? new GraphClient({ url: cfg.subgraphUrl }) : undefined,
+      index: graph,
     };
 
     report.step("coordinator");
@@ -102,6 +107,7 @@ export async function quorumMet(report: Reporter, params: ScenarioParams): Promi
       const recipientBefore = await balanceTinybars(cfg.mirrorUrl, recipient.accountId);
 
       report.step("the crowd arrives");
+      const settlements = new Map<string, string>();
       for (const [seat, buyer] of buyers.entries()) {
         const last = seat === buyers.length - 1;
         const expected = last ? 200 : 202;
@@ -117,6 +123,7 @@ export async function quorumMet(report: Reporter, params: ScenarioParams): Promi
             (last ? "- the pool is full and the resource is served" : "- settled, still filling"),
           `${buyer.label} got ${result.status}, expected ${expected}: ${JSON.stringify(result.body)}`,
         );
+        if (result.transactionId) settlements.set(buyer.label, result.transactionId);
         if (last && result.status === 200) {
           // A 200 is only worth having if it carries the thing that was bought. The licence
           // names the pool it descends from, so this also checks the resource is this run's.
@@ -138,6 +145,74 @@ export async function quorumMet(report: Reporter, params: ScenarioParams): Promi
       );
       const state = await pools.statusOf(poolId);
       report.expect(state === "Met", `pool ${poolId} is Met`, `pool ${poolId} is ${state}, expected Met`);
+
+      // §8. What a payer holds after a 202 is a settlement id and a private key - no session,
+      // no cookie, nothing the coordinator wrote down. This is the half of the primitive that
+      // exists only because payment and delivery are separated in time.
+      report.step("the index catches up");
+      const claimant = buyers[0];
+      if (!claimant) throw new Error("no buyers");
+      const claimantTx = settlements.get(claimant.label);
+      if (!claimantTx) {
+        report.bad(`${claimant.label} kept no settlement id, so its seat cannot be redeemed`);
+      } else {
+        const seen = await awaitIndexed(
+          report,
+          `${claimant.label}'s deposit is indexed`,
+          () => graph.depositFor(poolId.toString(), claimantTx),
+          {
+            progress: async () => {
+              const block = await graph.indexedBlock();
+              return block === undefined ? undefined : `index at block ${block.toLocaleString()}`;
+            },
+          },
+        );
+        if (!seen) {
+          report.bad(`the index never placed ${claimantTx} in pool ${poolId}`);
+        } else {
+          report.info(`deposit ${seen.depositId}, counted ${seen.counted}`);
+
+          report.step("redeem a seat");
+          const redeemed = await redeemSeat({
+            resourceUrl,
+            accountId: claimant.accountId,
+            key: PrivateKey.fromStringECDSA(claimant.privateKey),
+            network,
+            contractId,
+            poolId: poolId.toString(),
+            transaction: claimantTx,
+          });
+          const licensed = redeemed.body as { benchmark?: string; licensee?: string };
+          report.expect(
+            redeemed.status === 200 && licensed.benchmark === benchmark.id,
+            `${claimant.label} redeemed its seat with a signature, ${redeemed.status}`,
+            `${claimant.label} got ${redeemed.status}: ${JSON.stringify(redeemed.body)}`,
+          );
+
+          // The check that gives the one above its meaning. A receipt naming someone else's
+          // settlement is signed perfectly well - the signature is the claimant's own - so the
+          // only thing that can refuse it is the payer check against consensus state. Without
+          // this, a redemption that verified nothing but the signature would pass just as
+          // happily, and the 200 above would prove only that the server answers.
+          const impostor = buyers[1];
+          if (impostor) {
+            const stolen = await redeemSeat({
+              resourceUrl,
+              accountId: impostor.accountId,
+              key: PrivateKey.fromStringECDSA(impostor.privateKey),
+              network,
+              contractId,
+              poolId: poolId.toString(),
+              transaction: claimantTx,
+            });
+            report.expect(
+              stolen.status === 403,
+              `${impostor.label} was refused ${claimant.label}'s settlement, 403 - a seat is the payer's, not the bearer's`,
+              `${impostor.label} presenting ${claimant.label}'s settlement got ${stolen.status}, expected 403`,
+            );
+          }
+        }
+      }
 
       report.step("release");
       // Read immediately before, and bracketing the release alone. `_totalCommitted` is
