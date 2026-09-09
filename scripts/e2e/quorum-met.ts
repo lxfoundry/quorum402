@@ -156,21 +156,35 @@ export async function quorumMet(report: Reporter, params: ScenarioParams): Promi
       if (!claimantTx) {
         report.bad(`${claimant.label} kept no settlement id, so its seat cannot be redeemed`);
       } else {
-        const seen = await awaitIndexed(
+        const depositId = await awaitIndexed(
           report,
           `${claimant.label}'s deposit is indexed`,
-          () => graph.depositFor(poolId.toString(), claimantTx),
-          {
-            progress: async () => {
-              const block = await graph.indexedBlock();
-              return block === undefined ? undefined : `index at block ${block.toLocaleString()}`;
-            },
+          async () => {
+            const { depositId: found, indexedBlock } = await graph.depositFor(
+              poolId.toString(),
+              claimantTx,
+            );
+            return {
+              value: found,
+              progress:
+                indexedBlock === undefined
+                  ? undefined
+                  : `index at block ${indexedBlock.toLocaleString()}`,
+            };
           },
         );
-        if (!seen) {
+        if (depositId === undefined) {
           report.bad(`the index never placed ${claimantTx} in pool ${poolId}`);
         } else {
-          report.info(`deposit ${seen.depositId}, counted ${seen.counted}`);
+          // `counted` comes from the contract, never from the index. The index resolves a
+          // settlement to a *position*; whether that position took a seat is what entitlement
+          // turns on, and consensus is the only thing that may answer it.
+          const deposit = await pools.depositAt(poolId, depositId);
+          report.expect(
+            deposit.counted,
+            `deposit ${depositId} took a seat - read back from the contract, not the index`,
+            `deposit ${depositId} is recorded but took no seat`,
+          );
 
           report.step("redeem a seat");
           const redeemed = await redeemSeat({

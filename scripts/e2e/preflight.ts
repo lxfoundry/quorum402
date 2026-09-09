@@ -27,6 +27,14 @@ import type { Reporter } from "./harness.js";
 const FAUCET = "https://portal.hedera.com/faucet";
 
 /**
+ * A transaction id no settlement can have.
+ *
+ * Deliberately not a well-formed one: the reachability check wants an answer of "no such
+ * deposit, and here is how far I have read", and a plausible id risks matching something.
+ */
+const PROBE = "preflight-probe";
+
+/**
  * What the coordinator needs to see the run through.
  *
  * Five state-changing calls - `createPool`, one `recordDeposit` per buyer, `release` - plus the
@@ -94,9 +102,13 @@ export async function preflight(report: Reporter, params: PreflightParams): Prom
   if (cfg.subgraphUrl) {
     const graph = new GraphClient({ url: cfg.subgraphUrl });
     await check(report, "index", async () => {
-      const block = await graph.indexedBlock();
-      if (block === undefined) throw new Error("the subgraph reported no indexed block");
-      return `indexed to block ${block.toLocaleString()}`;
+      // A lookup for a settlement that cannot exist. The index reports how far it has read
+      // alongside every answer, so asking a question with no answer is how its head is read -
+      // and it exercises the same query the coordinator makes on the commonest refusal on the
+      // redemption path, "settled, not indexed yet", rather than a probe of its own.
+      const { indexedBlock } = await graph.depositFor("0", PROBE);
+      if (indexedBlock === undefined) throw new Error("the subgraph reported no indexed block");
+      return `indexed to block ${indexedBlock.toLocaleString()}`;
     });
   }
 

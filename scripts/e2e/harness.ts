@@ -103,8 +103,19 @@ export async function startCoordinator(deps: ServerDeps): Promise<Coordinator> {
 export interface AwaitOptions {
   attempts?: number;
   intervalMs?: number;
-  /** Where the index has got to, reported while waiting so a stall is diagnosable. */
-  progress?: () => Promise<string | undefined>;
+}
+
+/**
+ * One look at the index: what was found, and how far it has read.
+ *
+ * Both come back together because the index returns them together - the case that needs the
+ * head is the one where there is nothing found, so asking separately would double the cost of
+ * exactly the poll that repeats.
+ */
+export interface Look<T> {
+  value?: T;
+  /** Progress to report while waiting, so a stall is diagnosable rather than silent. */
+  progress?: string;
 }
 
 /**
@@ -120,32 +131,33 @@ export interface AwaitOptions {
 export async function awaitIndexed<T>(
   report: Reporter,
   what: string,
-  read: () => Promise<T | undefined>,
+  read: () => Promise<Look<T>>,
   options: AwaitOptions = {},
 ): Promise<T | undefined> {
   const attempts = options.attempts ?? 60;
   const intervalMs = options.intervalMs ?? 3_000;
   const started = Date.now();
+  const elapsed = () => Math.round((Date.now() - started) / 1000);
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
     // A read that throws is the index being unreachable, which is worth saying out loud and
     // is not worth giving up over - graph-node restarts, and the next poll may well succeed.
-    let seen: T | undefined;
+    let look: Look<T> = {};
     try {
-      seen = await read();
+      look = await read();
     } catch (error) {
       report.info(`${what}: index unreachable (${(error as Error).message})`);
     }
-    if (seen !== undefined) {
-      report.ok(`${what} after ${Math.round((Date.now() - started) / 1000)}s`);
-      return seen;
+    // Compared against `undefined` rather than tested for truth: a deposit id is a position,
+    // and the first position in a pool is 0.
+    if (look.value !== undefined) {
+      report.ok(`${what} after ${elapsed()}s`);
+      return look.value;
     }
     // Every fourth attempt, so a two-minute wait is a handful of lines and not forty.
     if (attempt % 4 === 0) {
-      const progress = await options.progress?.().catch(() => undefined);
       report.info(
-        `waiting for ${what} - ${Math.round((Date.now() - started) / 1000)}s` +
-          (progress ? `, ${progress}` : ""),
+        `waiting for ${what} - ${elapsed()}s` + (look.progress ? `, ${look.progress}` : ""),
       );
     }
     await new Promise((r) => setTimeout(r, intervalMs));
