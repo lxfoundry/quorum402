@@ -49,6 +49,7 @@ was rejected.
 | 2026-09-08 | `specs/quorum-scheme.md` and ADR 0005 | Read the x402 v2 specification, its HTTP transport and the `exact` scheme documents, then drafted the scheme spec and the decision record against them | Set the design in a question-by-question session before a line was written: that a legacy `exact` client must still be able to pay, that entitlement is derived from chain state rather than held in a session, that pools are opened by the seller and never by the server, and that the scheme nests its hold binding rather than referencing it |
 | 2026-09-08 | ADR 0006 and the coordinator's payment leg (`src/server/`) | Found that the solvency guard's arithmetic cancels, so every `recordDeposit` precondition can be checked before the irreversible step; wrote the pool registry, the requirement builders, the payer derivation and the preflight gate, with tests at each boundary | Set the rule the design had to satisfy — that every condition for recording must hold *before* settle is relayed — and rejected the first design's post-settlement balance polling. Chose an HCS topic over a private failure store, on the grounds that the coordinator's own failures should not be the only events nobody else can audit |
 | 2026-09-08 | The coordinator over HTTP (`src/server/index.ts`, `src/buyer/agent.ts`) | Wrote the §6 lifecycle, the receipt, the buyer that answers a 402 on its own, and tests driving every status-table row over a real listening server with the chain stubbed | Approved the testnet spend and set its bound. Called for a seller account distinct from the coordinator, which ADR 0003 assumes and a pool paying its own coordinator would not have shown |
+| 2026-09-09 | Receipt redemption (`src/server/redeem.ts`, `src/x402/redemption.ts`, `src/graph/client.ts`) | Wrote §8's canonical message and its verifier, the subgraph client the lookup needs, and the buyer's redemption path; checked every GraphQL query against the live index before building on it | Required that the index resolve only a *position*, with `payer` and `counted` read back from the contract — an indexer must not be able to make a seat valid. Rejected folding two new refusals into §6's catch-all 401, since a payer can act on only one of the three |
 
 ## 4. What was done without AI
 
@@ -264,6 +265,24 @@ and the seller up by three HBAR. `check-payout.ts` had already solved this with 
 which the new script did not use because nothing pointed at it. Knowing a fact well enough to
 write it down twice is not the same as applying it, and the failure mode of that gap is a script
 that reports the opposite of what happened.
+
+**2026-09-09 — reported a red test suite as green, having filtered the evidence.** The suite was
+run as `npm test | grep -E "not ok|passing"`, which matched the passing line, missed the
+`1 failing` line the runner prints beside it, and returned "171 passing" to a terminal where that
+looked like a complete answer. The commit message built on it said "171 tests, up from 134". One
+test was failing, and had been failing for the whole of that commit.
+
+The defect it was hiding is nothing: an assertion used the benchmark's URL slug where the licence
+carries the benchmark's id. Twenty seconds to fix. What is worth recording is the shape - a
+verification step was run, its output was narrowed by a filter written at the same moment and for
+the same convenience, and the narrowing was never treated as part of what had to be checked. A
+grep over test output is a claim about which lines can carry bad news, and that claim was wrong
+here without ever being examined.
+
+It is the same failure as the mirror-lag script the day before, one level up. There the fact was
+known and not applied; here the check was run and its result was not read. Both produce a report
+that is confidently the opposite of the truth, and in both cases the tool that would have caught
+it was already in hand and used partially.
 
 ## 6. Review, and what it caught
 
