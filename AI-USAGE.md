@@ -418,3 +418,43 @@ under review pressure goes deep enough on the thing being pointed at and stops t
 rule was applied to every read the reviewer had listed and to none it had not. That is not a
 failure of care; it is what "address the feedback" tends to mean in practice, and it is a reason
 to re-read a fix after the pressure is off.
+
+A third pass asked the narrowest question yet, and it was the one the paragraph above had just
+argued for: not "is this branch correct" but "are the *repairs* correct". The reviewer was given
+the four commits the first two reviews produced, and the branch only as context.
+
+It found a regression neither earlier pass could have caught, because it did not exist when they
+ran. `depositFor` had returned `IndexedDeposit | undefined`; consolidating the lag into it made
+it return an object that is always present, with the position as an optional field. The demo
+script still tested the result for truthiness. That check is now always true, so `npm run redeem`
+took the first pool it tried without asking the index anything — the newest pool naming the slug
+— and the refusal below it became unreachable in the same stroke. The visible symptom is a payer
+being told 404, that their settlement never happened or is not yet indexed, about a settlement
+that happened and is indexed. It re-broke a bug fixed on this same branch nine commits earlier.
+
+Three safety nets had the same hole. The deletion audit checked that removed things had no
+callers, and this was not a deletion — it was a signature change, which needs the opposite
+question asked. `tsc` sees nothing wrong with testing an object for truthiness, because there is
+nothing wrong with it. The ESLint rule that catches exactly this, `no-unnecessary-condition`,
+lives in the type-aware set this repo turns off for speed. And the one directory where all three
+gaps overlap is `scripts/`, which has no tests at all.
+
+The second finding is the same shape from the other side. Folding `_meta` into the deposit query
+saved a round trip and silently spent a `.catch(() => undefined)` that had been protecting it —
+the tolerance existed only because the call used to live somewhere else, and moving it did not
+look like removing it. The result was that an index able to say exactly where a deposit sat would
+answer 503 to a payer holding a good seat, because a diagnostic field beside the answer had
+failed. GraphQL returns partial data with errors by design, so this is the ordinary case, not an
+exotic one.
+
+Underneath both: **the reviews found the code wrong, and the fixes for them were written against
+the diff rather than against the callers.** A repair changes a signature far more often than it
+changes a behaviour, and a signature change puts its consequences outside the diff by definition.
+That is why the earlier passes kept finding blast-radius defects and this one did too — the
+category never closed, it just moved to whatever had been edited most recently.
+
+Worth recording separately: `src/graph/client.ts` had no tests. Every test in the suite stubbed
+`depositFor` and checked what the server did with the result, so the response shape — the single
+thing a subgraph is free to vary, and where both of these defects lived — had only ever been
+exercised against testnet, on the path where nothing goes wrong. It has eight now, seven of them
+about partial success.
