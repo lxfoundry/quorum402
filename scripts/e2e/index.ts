@@ -14,10 +14,11 @@
  * one and a run that only ever proves the "all" half has demonstrated the easy direction. The
  * crowd arrives, or the crowd falls one seat short and everybody is refunded.
  *
- * Run: npm run e2e                     # both scenarios
- *      npm run e2e -- --check          # preflight only; spends nothing
- *      npm run e2e -- --scenario met   # just the crowd that arrived - the quick one
- *      npm run e2e -- --seat 0.25      # a different seat price
+ * Run: npm run e2e                       # both scenarios
+ *      npm run e2e -- --check            # preflight only; spends nothing
+ *      npm run e2e -- --scenario met     # just the crowd that arrived - the quick one
+ *      npm run e2e -- --scenario missed  # just the crowd that fell short - the refunds
+ *      npm run e2e -- --seat 0.25        # a different seat price
  */
 import { benchmarkFor } from "../../src/benchmark/catalogue.js";
 import { caip2, loadConfig } from "../../src/config.js";
