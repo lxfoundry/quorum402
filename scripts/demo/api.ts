@@ -83,49 +83,48 @@ export function demoApi(ctx: DemoContext): Router {
   const pools = new PoolStatusCache(ctx);
   const balances = new BalanceCache(ctx);
 
-  router.get("/api/state", handle(async (req, res) => {
+  router.get("/api/state", route((req) => {
     const label = typeof req.query.wallet === "string" ? req.query.wallet : undefined;
-    res.json(await stateFor(ctx, pools, balances, label));
+    return stateFor(ctx, pools, balances, label);
   }));
 
-  router.post("/api/pool", handle(async (req, res) => {
-    res.json(await openPool(ctx, req.body as OpenPoolBody));
-  }));
+  router.post("/api/pool", route((req) => openPool(ctx, req.body as OpenPoolBody)));
 
-  router.post("/api/buy", handle(async (req, res) => {
-    res.json(await buy(ctx, req.body as { wallet: string; slug: string }));
-  }));
+  router.post("/api/buy", route((req) => buy(ctx, req.body as { wallet: string; slug: string })));
 
-  router.post("/api/redeem", handle(async (req, res) => {
-    res.json(await redeem(ctx, pools, req.body as { wallet: string; poolId: string }));
-  }));
+  router.post("/api/redeem", route((req) =>
+    redeem(ctx, pools, req.body as { wallet: string; poolId: string })));
 
-  router.post("/api/refund", handle(async (req, res) => {
-    res.json(await refund(ctx, req.body as { wallet: string; poolId: string }));
-  }));
+  router.post("/api/refund", route((req) =>
+    refund(ctx, req.body as { wallet: string; poolId: string })));
 
-  router.post("/api/release", handle(async (req, res) => {
-    res.json(await release(ctx, req.body as { poolId: string }));
-  }));
+  router.post("/api/release", route((req) => release(ctx, req.body as { poolId: string })));
 
   return router;
 }
 
 /**
- * One error path for every route.
+ * One error path for every route, and one place the answer is written.
  *
  * Express 4 does not catch a rejection from an async handler, and an uncaught one here takes the
  * demo down mid-recording. The coordinator makes the same provision for the same reason.
+ *
+ * Every route here answers with a JSON body and nothing else - none of them streams, and none
+ * writes a header before its work is done - so the wrapper can own `res` entirely and each route
+ * is left saying only what it computes.
  */
-function handle(
-  fn: (req: Request, res: Response) => Promise<void>,
+function route(
+  fn: (req: Request) => Promise<unknown>,
 ): (req: Request, res: Response) => void {
   return (req, res) => {
-    fn(req, res).catch((error: unknown) => {
-      const detail = error instanceof Error ? error.message : String(error);
-      console.error(`${req.method} ${req.originalUrl} failed: ${detail}`);
-      if (!res.headersSent) res.status(500).json({ error: detail });
-    });
+    fn(req).then(
+      (body) => res.json(body),
+      (error: unknown) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(`${req.method} ${req.originalUrl} failed: ${detail}`);
+        res.status(500).json({ error: detail });
+      },
+    );
   };
 }
 
