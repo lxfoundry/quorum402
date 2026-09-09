@@ -385,6 +385,15 @@ payload and drops everything else — which is the better command as well as the
 write down. The general form: a command that was verified in a shell but never run *out of
 the file* is untested, and the README is the artifact a judge runs.
 
+**And the replacement was wrong too, differently.** The review on the pull request that
+hosted the coordinator caught what had replaced it: `sed`'s `I` flag and `base64 -d` are both
+GNU spellings, and neither is on a stock macOS. Running the line out of the file — the fix
+for the first defect — does not catch this one, because the shell it was run out of the file
+*in* was GNU as well. Two defects in three lines, from unrelated causes, in the one block on
+the page whose entire purpose is being copied onto a machine that is not this one; and the
+check that catches either is blind to the other. It is `grep -i`, `cut` and
+`openssl base64 -A -d` now, which mean the same thing everywhere.
+
 ## 6. Review, and what it caught
 
 The contract was reviewed by a second Claude Code session given only the diff, the spec and
