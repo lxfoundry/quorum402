@@ -50,6 +50,7 @@ was rejected.
 | 2026-09-08 | ADR 0006 and the coordinator's payment leg (`src/server/`) | Found that the solvency guard's arithmetic cancels, so every `recordDeposit` precondition can be checked before the irreversible step; wrote the pool registry, the requirement builders, the payer derivation and the preflight gate, with tests at each boundary | Set the rule the design had to satisfy — that every condition for recording must hold *before* settle is relayed — and rejected the first design's post-settlement balance polling. Chose an HCS topic over a private failure store, on the grounds that the coordinator's own failures should not be the only events nobody else can audit |
 | 2026-09-08 | The coordinator over HTTP (`src/server/index.ts`, `src/buyer/agent.ts`) | Wrote the §6 lifecycle, the receipt, the buyer that answers a 402 on its own, and tests driving every status-table row over a real listening server with the chain stubbed | Approved the testnet spend and set its bound. Called for a seller account distinct from the coordinator, which ADR 0003 assumes and a pool paying its own coordinator would not have shown |
 | 2026-09-09 | Receipt redemption (`src/server/redeem.ts`, `src/x402/redemption.ts`, `src/graph/client.ts`) | Wrote §8's canonical message and its verifier, the subgraph client the lookup needs, and the buyer's redemption path; checked every GraphQL query against the live index before building on it | Required that the index resolve only a *position*, with `payer` and `counted` read back from the contract — an indexer must not be able to make a seat valid. Rejected folding two new refusals into §6's catch-all 401, since a payer can act on only one of the three |
+| 2026-09-09 | The refund path, end to end (`scripts/e2e/quorum-missed.ts`, `src/pool/client.ts`) | Found that the contract's two refund methods had no caller anywhere above Solidity, added them to the pool client, and wrote the scenario that drives a pool past its deadline one seat short and refunds both payers on testnet | Chose to spend the remaining build time proving the failure path rather than finishing the README, on the grounds that a demo of an all-or-nothing primitive that only ever shows the *all* has shown the easy half. Called for both of §9's reversal paths in one run rather than the cheaper one, since they exist for different people |
 
 ## 4. What was done without AI
 
@@ -329,6 +330,27 @@ let it finish. The orphan-resilience claim was never tested; it holds by constru
 run sells on an ephemeral port, so its resource URL is one no earlier pool can name — and that
 is an argument, not a measurement. Recorded because the failure is self-flattering: a
 verification step that cannot fail reads exactly like one that passed.
+
+**2026-09-09 — a well-tested function nothing could call.** `claimRefund` and `refundAll` had
+unit tests over the arithmetic, the expiry ordering, the already-refunded skip and a payer
+contract that burns the gas it is sent. What they did not have was a caller. `PoolsClient`
+exposed `createPool`, `recordDeposit` and `release` and stopped, under a header comment saying
+refunds were "a payer's business and go through the payer's own key, so they are not on this
+client" — which is true, and was quietly doing the work of a decision. Every layer above the
+contract was therefore structurally incapable of reaching the half of the primitive the README
+leads with: no script, no demo and no end-to-end run could refund anybody. The coverage
+answered "is this function correct" completely, and nothing in the suite or the type system
+asks "can anything reach it". A public interface that stops one method short of a claim the
+project makes is not visible as an absence — it looks exactly like a finished interface.
+
+The same day's second lesson is the one underneath it. `test/redemption.ts` already asserted the
+409-with-reclaim ruling for an expired pool, over injected state; `test/refunds.ts` already
+asserted the refund arithmetic, on an in-process EVM. Both passed, and neither had ever seen a
+pool expire because a real clock passed a real deadline. The scenario written to close that gap
+passed on its first run against testnet, which is worth recording precisely because it is not
+evidence of much: every mechanism it drives was already exercised somewhere, and what was
+missing was never a mechanism. It was the choreography, and the choreography is the part a unit
+test is defined not to have.
 
 ## 6. Review, and what it caught
 
