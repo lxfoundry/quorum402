@@ -63,6 +63,24 @@ interface RawPool {
   resourceUrl: string;
 }
 
+/**
+ * One recorded payment, as the contract holds it.
+ *
+ * Note what is *not* here: the Hedera transaction id it settled under. The contract hashes that
+ * into its double-spend guard and keeps only the hash, so the id survives in the events alone -
+ * which is why §8 needs an index to reach a deposit and cannot simply ask for one.
+ */
+export interface Deposit {
+  /** The EVM address the payment was attributed to. What `claimRefund` matches on. */
+  payer: string;
+  tinybars: bigint;
+  /** Whether it took a seat. False means it settled late: refundable at once, entitling nothing. */
+  counted: boolean;
+  refunded: boolean;
+}
+
+/** The shape `depositAt` returns once decoded. Same fields; `payer` is already a hex string. */
+
 let abiCache: Abi | undefined;
 
 /**
@@ -223,6 +241,33 @@ export class PoolsClient {
       state,
       resourceUrl: raw.resourceUrl,
     };
+  }
+
+  /**
+   * One deposit, by the index the log gave for it.
+   *
+   * §8 splits the lookup deliberately: the transaction id lives only in the events, so an index
+   * resolves id to position - but `payer` and `counted`, the two facts entitlement turns on, are
+   * read back from here. An indexer that lagged, or lied, can then at worst point at the wrong
+   * row, and the row itself still comes from consensus state.
+   *
+   * Reverts `NoSuchDeposit` for an index the pool does not have. The caller does not bound the
+   * index first on purpose: an index that names a row consensus lacks is an index disagreeing
+   * with consensus, which is not an answer about the payer, and `redeem` reports it as a read
+   * it could not make rather than as a missing seat.
+   */
+  async depositAt(poolId: bigint, depositId: bigint): Promise<Deposit> {
+    const args = new ContractFunctionParameters()
+      .addUint256(long(poolId))
+      .addUint256(long(depositId));
+    const data = await this.queryBytes("depositAt", args);
+    // No conversion, unlike `poolOf`: every field of `depositAt` already decodes to the type
+    // `Deposit` declares, so a field-by-field copy here would only mimic work it is not doing.
+    return decodeFunctionResult({
+      abi: abi(),
+      functionName: "depositAt",
+      data,
+    }) as unknown as Deposit;
   }
 
   /** Tinybars this contract owes to payers and recipients. Never derived from its balance. */

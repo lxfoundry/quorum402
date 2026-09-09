@@ -17,20 +17,77 @@
  * `quorum-scheme.md` §8 turns this into a rule: the address recorded against a deposit must be
  * the one the network holds, at recording time and at redemption time alike, or a seat cannot
  * be redeemed by the account that bought it.
+ *
+ * **Deliberately asks nothing about the account's key.** Every account has an address, including
+ * the threshold-key and contract accounts `accountOf` returns without one; whether an account can
+ * *sign* is a separate question with a separate answer, and conflating them here would make an
+ * address the coordinator only needs in order to refund conditional on a capability only
+ * redemption needs.
  */
 export async function evmAddressOf(mirrorUrl: string, accountId: string): Promise<string> {
-  const res = await fetch(`${mirrorUrl}/api/v1/accounts/${accountId}?limit=1`);
-  if (!res.ok) throw new Error(`mirror node returned ${res.status} for account ${accountId}`);
-  const body = (await res.json()) as { evm_address?: string };
+  const body = await accountRecord(mirrorUrl, accountId);
   if (!body.evm_address) throw new Error(`mirror node has no evm address for ${accountId}`);
   return body.evm_address;
 }
 
+/** How an account's key is held. The two Hedera supports sign and verify identically here. */
+export type AccountKeyType = "ECDSA_SECP256K1" | "ED25519";
+
+export interface MirrorAccount {
+  /** The address the network holds - see `evmAddressOf` for why that qualifier matters. */
+  evmAddress: string;
+  /**
+   * Raw public key hex: 33 bytes compressed for ECDSA, 32 for ED25519.
+   *
+   * **Absent when the account has no single key this scheme can use** - a threshold key, a key
+   * list, or a contract account with no key at all. That is a fact about the account, reported
+   * as a value, and deliberately not an exception: a throw from here means the ledger could not
+   * be read, which is a fact about *this server*. Collapsing the two forced every caller to
+   * give one answer to both, and they are not the same question - §6 puts a mirror outage at
+   * 503 and an unusable key at 401.
+   */
+  key?: { type: AccountKeyType; hex: string };
+}
+
+/**
+ * The public key and network address of an account, in one request.
+ *
+ * §8 asks a redeeming server for both - the key to verify the signature, the address to match
+ * against the deposit's recorded payer - and the mirror node returns them from the same record.
+ * Two calls would also be two moments, and an account whose key rotated between them would
+ * verify against one and be matched against the other.
+ *
+ * A threshold key or key list yields no `key` rather than a guess. `quorum` has nothing to say
+ * about m-of-n redemption, and picking one key out of a list would invent a rule §8 does not
+ * have; a smart contract account has no key at all and cannot sign this message. Each of those
+ * is an account this scheme cannot seat, which the caller decides what to do about - it throws
+ * only when the ledger itself could not be read.
+ */
+export async function accountOf(mirrorUrl: string, accountId: string): Promise<MirrorAccount> {
+  const body = await accountRecord(mirrorUrl, accountId);
+  if (!body.evm_address) throw new Error(`mirror node has no evm address for ${accountId}`);
+  const evmAddress = body.evm_address;
+  const type = body.key?._type;
+  if (type !== "ECDSA_SECP256K1" && type !== "ED25519") return { evmAddress };
+  if (!body.key?.key) return { evmAddress };
+  return { evmAddress, key: { type, hex: body.key.key } };
+}
+
+/** One account record. The three readers below each want a different field of it. */
+interface AccountRecord {
+  evm_address?: string;
+  key?: { _type?: string; key?: string } | null;
+  balance?: { balance?: number };
+}
+
+async function accountRecord(mirrorUrl: string, accountId: string): Promise<AccountRecord> {
+  const res = await fetch(`${mirrorUrl}/api/v1/accounts/${accountId}?limit=1`);
+  if (!res.ok) throw new Error(`mirror node returned ${res.status} for account ${accountId}`);
+  return (await res.json()) as AccountRecord;
+}
+
 export async function balanceTinybars(mirrorUrl: string, id: string): Promise<bigint> {
-  const res = await fetch(`${mirrorUrl}/api/v1/accounts/${id}?limit=1`);
-  if (!res.ok) throw new Error(`mirror node returned ${res.status} for ${id}`);
-  const body = (await res.json()) as { balance?: { balance?: number } };
-  return BigInt(body.balance?.balance ?? 0);
+  return BigInt((await accountRecord(mirrorUrl, id)).balance?.balance ?? 0);
 }
 
 /**

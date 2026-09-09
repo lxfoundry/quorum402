@@ -16,9 +16,11 @@ import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
   PAYMENT_SIGNATURE_HEADER,
+  QUORUM_RECEIPT_HEADER,
   decodeHeaderValue,
   encodeHeaderValue,
 } from "../x402/http.js";
+import { encodeRedemptionReceipt, signRedemptionReceipt } from "../x402/redemption.js";
 import { buildPartiallySignedTransfer } from "../x402/hedera-exact.js";
 import type {
   PaymentRequired,
@@ -145,4 +147,57 @@ function transactionIdOf(transactionBase64: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** What a redemption attempt came back with. */
+export interface RedemptionAttempt {
+  status: number;
+  body: unknown;
+}
+
+/**
+ * How long a buyer asks its receipt to stay good for.
+ *
+ * Short deliberately, and shorter than the server's ceiling: inside its window the receipt can
+ * be replayed by anyone who sees it (§8), so the buyer has no reason to sign a longer-lived one
+ * than the request it is about to make needs.
+ */
+export const RECEIPT_VALIDITY_SECONDS = 120;
+
+/**
+ * Redeem a seat - `quorum-scheme.md` §8, from the payer's side.
+ *
+ * Everything signed here is a fact the buyer already holds: which pool, which settlement, which
+ * resource. Nothing is asked of the coordinator first, and nothing the coordinator says can
+ * change what is signed - which is what makes the proof checkable by a third party rather than
+ * a conversation between these two.
+ */
+export async function redeemSeat(params: {
+  resourceUrl: string;
+  accountId: string;
+  key: PrivateKey;
+  network: string;
+  /** The pool contract's Hedera id, bound in so a signature cannot cross deployments. */
+  contractId: string;
+  poolId: string;
+  /** The settlement the seat descends from - the transaction id the payment returned. */
+  transaction: string;
+}): Promise<RedemptionAttempt> {
+  const validUntil = Math.floor(Date.now() / 1000) + RECEIPT_VALIDITY_SECONDS;
+  const presented = encodeRedemptionReceipt(
+    signRedemptionReceipt(params.key, {
+      accountId: params.accountId,
+      network: params.network,
+      contract: params.contractId,
+      poolId: params.poolId,
+      transaction: params.transaction,
+      resource: params.resourceUrl,
+      validUntil,
+    }),
+  );
+
+  const res = await fetch(params.resourceUrl, {
+    headers: { [QUORUM_RECEIPT_HEADER]: presented },
+  });
+  return { status: res.status, body: await res.json() };
 }

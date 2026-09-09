@@ -18,6 +18,15 @@ export interface Config {
    */
   publicBaseUrl: string;
   payToId: string | undefined;
+  /**
+   * The subgraph redemption resolves transaction ids through - `quorum-scheme.md` §8.
+   *
+   * Optional, and the coordinator runs without it: selling seats and settling payments need
+   * only the contract. Redemption does not work without it, because the transaction id a
+   * payment settled under is emitted and never stored, so with no index there is nothing to
+   * resolve a payer's receipt against.
+   */
+  subgraphUrl: string | undefined;
 }
 
 class MissingConfig extends Error {
@@ -71,6 +80,7 @@ export function loadConfig(): Config {
       process.env.PUBLIC_BASE_URL?.trim() || `http://localhost:${port}`,
     ),
     payToId: process.env.PAY_TO_ID?.trim() || undefined,
+    subgraphUrl: process.env.SUBGRAPH_URL?.trim() || undefined,
   };
 }
 

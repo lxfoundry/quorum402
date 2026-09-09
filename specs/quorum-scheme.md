@@ -221,10 +221,34 @@ fails. `conditional` adds one row: **202 Accepted**.
 | " | Proof valid, but the deposit took no seat (`counted: false`) | 409 + where to reclaim |
 | " | Pool still open | 202 + current fill |
 | " | Pool expired | 409 + where to reclaim |
+| " | Proof valid, but the deposit belongs to another account | 403 |
+| " | No deposit in this pool for that transaction | 404 |
 | " | Proof invalid or expired | 401 |
+| " | A read the decision needs could not be made | 503 + `Retry-After` |
+| " | Build has no index wired, so no transaction id can be resolved | 501 |
 
-Redemption is not a payment handshake, so the last four are ordinary HTTP rather than x402 error
-mappings.
+Redemption is not a payment handshake, so the last eight are ordinary HTTP rather than x402 error
+mappings. The **501** is the odd one: it is a statement about the deployment rather than about the
+request, and it exists because §8 step 4 needs the binding's logs. A server with no way to read
+them cannot answer *any* redemption, and saying so plainly beats refusing good receipts with 401.
+
+**403 and 404 are distinguished from 401 deliberately.** All three refuse, and a payer can act on
+only one of them. 401 says the proof did not stand up, so signing again with the right key, pool
+or expiry may work. **403** says the signature was good and the deposit is somebody else's: there
+is no better credential to present, and inviting a retry would be a lie. **404** says this pool
+has no deposit under that transaction id, which is not a statement about the proof at all - and
+whose ordinary cause is an index a second behind the settlement that just funded the seat, so a
+server SHOULD report how far the index has got and a client SHOULD retry rather than conclude its
+payment never happened.
+
+**503 is the fourth, and it is not about the receipt at all.** Redemption reads the pool, the
+ledger, the index and the contract, and any of them can be unreachable, slow past its timeout, or
+— where the index names a row consensus does not have — wrong. A server that let those surface as 404 would tell a payer holding
+a good seat that their payment does not exist; one that let them surface as 500 would say nothing
+at all. **The distinction a server MUST preserve is between a fact about the pool and a fact about
+itself.** It SHOULD carry `Retry-After`, and it MUST NOT return the underlying failure to the
+payer: upstream error text describes how the coordinator is wired, the payer can act on none of
+it, and a refusal is a poor place to publish it.
 
 **Delivery depends on the threshold being met, never on the seller having been paid.** Paying the
 seller is a separate, permissionless action; coupling a buyer's access to it would let a failed
@@ -258,6 +282,83 @@ protocol facts stay in `PAYMENT-RESPONSE`.
 against the pool without taking a seat — it arrived after the last one, or after the deadline — in
 which case it is refundable immediately and `counted` is `false`. Reporting such a payment as a
 seat would be a lie the payer discovers only when redemption fails.
+
+### 6.2 The payment leg, as built
+
+One buyer taking one seat. The refusals are drawn where they actually happen, because *where* is
+the whole design: every one of them is on the left of the `/settle` line.
+
+`RS->>RS` is a decision over facts already in hand rather than a fresh read — the pool's terms and
+state are fetched once per request and carried, so §7.2's check and the pre-flight's are the same
+two numbers examined twice, not two round trips.
+
+```mermaid
+sequenceDiagram
+    actor B as Buyer
+    participant RS as Resource server<br/>(coordinator)
+    participant M as Mirror node
+    participant G as Subgraph
+    participant F as Facilitator
+    participant H as Hedera
+    participant P as Pool contract
+
+    B->>RS: GET /resource
+    RS->>P: poolCount, poolOf, statusOf
+    Note over RS: no open pool names this URL → 404
+    RS->>F: GET /supported
+    F-->>RS: feePayer for hedera:testnet
+    RS-->>B: 402 + PAYMENT-REQUIRED<br/>accepts[quorum, exact]
+
+    B->>B: build TransferTransaction,<br/>sign — cannot submit alone
+    B->>RS: GET /resource + PAYMENT-SIGNATURE
+
+    rect rgba(120, 160, 255, 0.12)
+        Note over RS,P: everything that can refuse runs here — the payer still has their money
+        RS->>P: poolCount, poolOf, statusOf — read once, carried through
+        RS->>F: GET /supported — re-read per request, so a rotated fee payer is caught
+        RS->>RS: payload matches an advertised entry (§7.1) → 400
+        RS->>RS: pool closed since the 402 (§7.2) → 402
+        RS->>RS: transfer debits one account, pays this contract → 400
+        RS->>M: key and evm address of the paying account (§7.5) → 402
+        Note over RS,M: no key that can sign → 402, before the money moves:<br/>that account could never redeem the seat (§11)
+        RS->>RS: this is a pool this coordinator runs → 402
+        RS->>P: committedTinybars, balanceTinybars → 402
+        RS->>M: coordinator's own balance → 402
+        RS->>G: has this transaction been attributed already?
+        Note over RS,G: → 402 on a definite yes only. The index lags, so it<br/>cannot prove a payment is new, and one that cannot<br/>answer must not refuse a payment that is otherwise good
+        Note over RS,P: ADR 0006 pre-flight — every recordDeposit precondition
+    end
+
+    RS->>F: POST /verify — binding payload only (§7.3)
+    F-->>RS: isValid
+    RS->>F: POST /settle
+    Note right of F: irreversible from here
+    F->>H: add fee-payer signature, submit
+    H-->>P: HBAR credited — no contract code runs
+    F-->>RS: success + hederaTxId
+
+    rect rgba(255, 150, 60, 0.14)
+        Note over RS,P: §7.6 — no path below returns a refusal
+        RS->>P: recordDeposit(poolId, payerEvm, unit, hederaTxId)
+        alt recorded
+            P-->>RS: depositId, counted
+        else recording will not land
+            RS->>RS: write the failure log line, for replay by hand
+            RS-->>B: 202 + PAYMENT-RESPONSE, counted: null
+        end
+    end
+
+    RS->>P: poolOf, statusOf
+    alt this payment took the last seat
+        RS-->>B: 200 + resource + receipt
+    else the pool is still short
+        RS-->>B: 202 + receipt — the row no other x402 flow has
+    end
+```
+
+A payment that settles and takes no seat — it arrived after the last one, or after the deadline —
+still ends at 202, with `counted: false` and a receipt that is refundable at once rather than
+redeemable. §6.1 forbids reporting that as a seat.
 
 ## 7. Resource server verification rules (MUST)
 
@@ -352,6 +453,101 @@ it can be replayed by anyone who observes it** — the window and the transport 
 that, and what it yields is a resource already unlocked for N payers. It is a proof of
 entitlement, not a bearer secret, and this document does not claim otherwise.
 
+Because the window *is* the containment, rule 1's "implausibly far ahead" needs a number in any
+implementation. The reference implementation refuses anything more than **15 minutes** ahead and
+allows 30 seconds of clock skew on expiry, in the payer's favour only — a receipt refused slightly
+late costs one retry, one refused slightly early costs a seat that will not open. A payer has no
+reason to sign a longer-lived receipt than the request it is about to make, and this one asks for
+two minutes.
+
+### 8.1 Redemption, as built
+
+The ordered checks above, drawn against what runs. Two things the prose can only assert and a
+diagram shows: **the deposit is never looked up until the signature verifies, and the ledger is
+never asked until the receipt is in date** — which is what stops an unsigned request learning
+whether a transaction or a seat exists — and the deposit is resolved in **two hops**, an index for
+the position and the contract for the facts, so no indexer can make a seat valid.
+
+The pool itself *is* read before any of that, because the server has to know whose terms the
+receipt is being checked against. That read discloses nothing a 402 on the same URL would not.
+
+```mermaid
+sequenceDiagram
+    actor B as Buyer<br/>(holds a 202 receipt)
+    participant RS as Resource server<br/>(coordinator)
+    participant M as Mirror node
+    participant G as Subgraph
+    participant P as Pool contract
+
+    Note over B: nothing is requested first —<br/>every fact signed is one the buyer already holds
+    B->>B: sign the §8 canonical message<br/>with the paying account's key
+    B->>RS: GET /resource + QUORUM-RECEIPT
+
+    Note over RS,G: no index wired → 501, before anything else.<br/>The transaction id lives only in the log
+    RS->>RS: decode the envelope → 401
+    RS->>RS: rule 1 · expired, or valid implausibly far ahead → 401
+    Note over RS,P: rule 1 runs before any read. It is the only check that<br/>touches no network, and an out-of-date receipt is the<br/>cheapest request to send — so it must be the cheapest to refuse
+    RS->>P: poolCount, then poolOf for any pool not seen before
+    Note over RS,P: no pool of this URL bears the receipt's id → 401, the same<br/>answer as a bad signature: which pools exist is not disclosed here
+    RS->>P: poolOf, statusOf — the named pool's terms and live state
+    P-->>RS: read once, and carried through every check below
+    Note over RS,P: either contract read fails → 503, never 401 or 404 — the<br/>same rule the ledger and the index are held to below
+
+    rect rgba(120, 160, 255, 0.12)
+        Note over RS,M: rules 2-3 — proof before deposit: no deposit is touched in here
+        RS->>M: rule 2 · account's public key and network EVM address
+        M-->>RS: key{type, hex}, evmAddress
+        Note over RS,M: no key that can sign — threshold key, key list,<br/>contract account → 401. The account cannot be seated,<br/>and no re-signing would change that
+        Note over RS,M: mirror unreachable → 503, never 401 — the read failed,<br/>the proof did not, and the two are different answers
+        RS->>RS: rule 3 · verify over the exact bytes → 401<br/>(says only "does not verify" — never which field)
+    end
+
+    rect rgba(80, 200, 120, 0.14)
+        Note over RS,P: rule 4 — the index gives a position, the contract answers for the row
+        RS->>G: deposit where pool = poolId and hederaTxId = transaction,<br/>and _meta.block.number in the same query
+        Note over RS,G: one round trip. The head only annotates a refusal, so an index<br/>that places the deposit and cannot report its own head has still answered
+        alt no such row
+            G-->>RS: nothing, and how far the index has read
+            RS-->>B: 404 + indexedBlock — never settled, or not indexed yet
+        else found
+            G-->>RS: depositId
+            RS->>P: depositAt(poolId, depositId)
+            P-->>RS: payer, counted
+        else either read fails
+            RS-->>B: 503 + Retry-After — a fact about this server,<br/>never reported as a missing seat
+        end
+        RS->>RS: recorded payer ≠ this account → 403, not 401 —<br/>the proof was good, the claim was not theirs
+        RS->>RS: counted = false → 409 + where to reclaim
+    end
+
+    Note over RS: rule 5 — decided on the state already in hand
+    alt Met or Released
+        RS-->>B: 200 + resource
+        Note over P: Released still entitles — testing for<br/>Met alone would withhold the resource<br/>the moment the payout landed
+    else Open — the crowd has not arrived
+        RS-->>B: 202 + current fill
+    else Expired
+        RS-->>B: 409 + where to reclaim, not a retry
+    end
+```
+
+Nothing is written down on any path. The server holds no record that a seat was redeemed, so a
+restart, a second coordinator, or a third party with the same reads reaches the same answer —
+which is what "entitlement is derived from the hold binding's state" means in practice.
+
+Every read this flow makes — the pool, the ledger, the index, the contract — can fail for a
+reason that is not about the receipt, and all of them are drawn ending at 503 rather than at a
+401, a 404 or a 500. That is the rule §6 states, and it is a rule precisely because the honest
+answer differs from the convenient one at every single site: a coordinator that cannot make a
+read owes the payer the difference between *"your proof does not stand up"*, *"there is no such
+seat"*, and *"I cannot currently tell"*.
+
+Distinguishing them takes some care at the ledger, because two unrelated things arrive there
+together: an account with **no key this scheme can use** — a threshold key, a key list, a
+contract account — is a fact about the account and stays 401, while a mirror node that will not
+answer is a fact about this server and is 503. Reported as one failure they collapse into one
+status, and the 401 is the one that would win.
+
 ## 9. Reversal
 
 If the deadline passes without the threshold being met, every payer is owed their money.
@@ -376,7 +572,7 @@ A hold binding answers one question: how is one payer's money held between commi
 
 | Binding | Status here | Status upstream |
 |---|---|---|
-| `exact` + pool contract | **Hold and settlement built and demonstrated on testnet.** The coordinator implementing §6–§8 is specified here, not yet written | Merged; 17 network bindings |
+| `exact` + pool contract | **Built and demonstrated on testnet**, including the coordinator implementing §6–§8 | Merged; 17 network bindings |
 | `auth-capture` | Not built | Merged; **EVM only** |
 | `escrow` | Not built | **Proposed, open** |
 
@@ -451,6 +647,12 @@ reasoning, and the evidence behind it, is [ADR 0001](adr/0001-what-quorum-binds-
   That payment is recorded, not counted, and refundable at once — correct, but it costs the payer a
   transaction fee and a round trip.
 - **A redemption proof is replayable inside its validity window** (§8).
+- **A seat can only be held by an account with one signing key.** Redemption is a signature by the
+  paying account's key (§8 rule 3), and `quorum` has nothing to say about m-of-n: a threshold key
+  or key list would need a rule for how many signatures a receipt carries, and a contract account
+  has no key to sign with at all. Such an account can pay perfectly well, which is the trap - so
+  the coordinator resolves the payer's key *before* settling and refuses with 402, rather than
+  taking the money for a seat nothing could ever open.
 - **A fallback payer is told about conditionality only in prose, and only at the response
   level**, because an `accepts[]` entry has no field to carry it (§5).
 - **This scheme is proposed, not adopted.** No facilitator serves `quorum`, and none needs to: the

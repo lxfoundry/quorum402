@@ -25,8 +25,11 @@ import {
   licence,
   resourceUrlFor,
 } from "../benchmark/catalogue.js";
+import type { Benchmark } from "../benchmark/catalogue.js";
 import { caip2, loadConfig } from "../config.js";
-import { balanceTinybars, evmAddressOf } from "../hedera/mirror.js";
+import { GraphClient } from "../graph/client.js";
+import { accountOf, balanceTinybars, evmAddressOf } from "../hedera/mirror.js";
+import type { MirrorAccount } from "../hedera/mirror.js";
 import { PoolsClient } from "../pool/client.js";
 import type { PoolState, PoolTerms } from "../pool/client.js";
 import { readDeployment } from "../pool/deployment.js";
@@ -38,21 +41,25 @@ import {
   QUORUM_RECEIPT_HEADER,
   encodeHeaderValue,
 } from "../x402/http.js";
+import { decodeRedemptionReceipt } from "../x402/redemption.js";
 import type { Network, QuorumRequirements } from "../x402/types.js";
 import { FailureReporter } from "./failures.js";
 import { inspectBindingTransfer } from "./payer.js";
 import { bindingRequestFor, validateQuorumPayload } from "./payment.js";
 import { PoolRegistry } from "./pools.js";
+import type { PoolAvailability } from "./pools.js";
 import { preflight } from "./preflight.js";
 import type { SolvencyReader } from "./preflight.js";
 import { buildReceipt } from "./receipt.js";
+import { expiredProof, redeem, statusFor, unreadable } from "./redeem.js";
+import type { RedemptionRefusal } from "./redeem.js";
 import { settleAndRecord } from "./record.js";
 import { bindingRequirements, paymentRequired, quorumRequirements } from "./requirements.js";
 
 export interface ServerDeps {
   registry: PoolRegistry;
   pools: SolvencyReader &
-    Pick<PoolsClient, "recordDeposit" | "revertReasonOf" | "poolOf" | "statusOf">;
+    Pick<PoolsClient, "recordDeposit" | "revertReasonOf" | "poolOf" | "statusOf" | "depositAt">;
   facilitator: Pick<Facilitator, "verify" | "settle" | "feePayerFor">;
   failures: FailureReporter;
   network: Network;
@@ -62,8 +69,20 @@ export interface ServerDeps {
   publicBaseUrl: string;
   coordinatorAccountId: string;
   coordinatorAddress: string;
-  evmAddressOf: (accountId: string) => Promise<string>;
+  /**
+   * §8 step 2: the key a receipt is verified against, and the address it must match.
+   *
+   * Also the payment path's address lookup, because it refuses an account that cannot sign -
+   * see the call site for why that refusal belongs before the money moves.
+   */
+  accountOf: (accountId: string) => Promise<MirrorAccount>;
   coordinatorBalanceTinybars: () => Promise<bigint>;
+  /**
+   * The index that resolves a transaction id to a deposit - §8 step 4, and the only fact
+   * consensus state cannot answer. Optional: without it the coordinator still sells seats and
+   * settles payments, and only redemption is unavailable.
+   */
+  index?: Pick<GraphClient, "depositFor" | "isRecorded">;
   /** Retry knobs, so a test does not wait out the backoff. */
   record?: { sleep?: (ms: number) => Promise<void>; attempts?: number; retryMs?: number };
 }
@@ -121,13 +140,12 @@ async function handle(deps: ServerDeps, req: Request, res: Response): Promise<vo
   }
   const resourceUrl = resourceUrlFor(deps.publicBaseUrl, slug);
 
-  // Redemption is §8 and is not built here yet. Saying so beats answering as though the header
-  // had not been sent, which would hand back a 402 and read as "pay again".
-  if (req.get(QUORUM_RECEIPT_HEADER)) {
-    res.status(501).json({
-      error: "redemption is not implemented on this build",
-      detail: `${QUORUM_RECEIPT_HEADER} is quorum-scheme.md §8. Entitlement is derived from chain state, so a seat remains redeemable once it is.`,
-    });
+  // §8. Checked before anything else about the request, because a payer redeeming a seat is
+  // not making a payment: answering as though the header had not been sent would hand back a
+  // 402 and read as "pay again", and the pool they hold a seat in is by then closed.
+  const presented = req.get(QUORUM_RECEIPT_HEADER);
+  if (presented) {
+    await redeemSeat(deps, { presented, benchmark, resourceUrl }, res);
     return;
   }
 
@@ -195,23 +213,47 @@ async function handle(deps: ServerDeps, req: Request, res: Response): Promise<vo
 
   // §7 rule 5, run early because `recordDeposit` needs the address and a payer it cannot
   // resolve is a deposit it could not attribute (ADR 0006).
-  let payer: string;
+  //
+  // `accountOf` rather than `evmAddressOf`, because it also requires a key that can sign, and
+  // refusing on that here is the point: a threshold-key, key-list or contract account can pay
+  // perfectly well and could never produce the §8 signature that redeems what it paid for.
+  // Letting the payment through would sell a seat nothing can open, and the payer would find
+  // out at redemption, having already parted with the money. §11 records the limitation.
+  let account: MirrorAccount;
   try {
-    payer = await deps.evmAddressOf(transfer.transfer.payerAccountId);
+    account = await deps.accountOf(transfer.transfer.payerAccountId);
   } catch (error) {
+    // The ledger could not be read - a fact about this server, not about the payer. Still 402,
+    // because §6 puts every pre-settlement refusal there and the payer's money has not moved,
+    // but the upstream text stays in the log: it describes how this coordinator is wired.
+    const because = error instanceof Error ? error.message : String(error);
+    console.error(`payment for ${resourceUrl} could not resolve the payer: ${because}`);
     res.status(402).json({
-      error: "the paying account has no address this contract could refund",
-      detail: error instanceof Error ? error.message : String(error),
+      error: "this payment cannot be settled right now",
+      detail: "the paying account could not be read from the ledger",
     });
     return;
   }
+  if (!account.key) {
+    res.status(402).json({
+      error: "the paying account could not hold a redeemable seat",
+      detail: `account ${transfer.transfer.payerAccountId} has no single key that could sign a redemption proof, so a seat bought here could never be opened`,
+    });
+    return;
+  }
+  const payer = account.evmAddress;
 
+  const index = deps.index;
   const gate = await preflight(
     {
       contract: deps.pools,
       coordinatorAccountId: deps.coordinatorAccountId,
       coordinatorAddress: deps.coordinatorAddress,
       coordinatorBalanceTinybars: deps.coordinatorBalanceTinybars,
+      // ADR 0006's replay check, and the one precondition only an index can answer: the
+      // contract hashes settled transaction ids into a private set and exposes no getter.
+      // What a failure to answer means is `preflight`'s rule, not this wiring's.
+      isAlreadyRecorded: index ? (hederaTxId: string) => index.isRecorded(hederaTxId) : undefined,
     },
     { availability: selling, hederaTxId: transfer.transfer.transactionId },
   );
@@ -300,6 +342,143 @@ async function handle(deps: ServerDeps, req: Request, res: Response): Promise<vo
   res.status(202).json(receipt);
 }
 
+/**
+ * Redeem a seat - `quorum-scheme.md` §8, and the last five rows of §6's table.
+ *
+ * No funds move, no facilitator is involved and nothing is written down. What the payer presents
+ * is a signature over facts already on chain, and every refusal below is a fact about the chain
+ * rather than about this server's memory - which is what lets a restart, or a second coordinator,
+ * answer the same question the same way.
+ */
+async function redeemSeat(
+  deps: ServerDeps,
+  request: { presented: string; benchmark: Benchmark; resourceUrl: string },
+  res: Response,
+): Promise<void> {
+  const { presented, benchmark, resourceUrl } = request;
+
+  // Redemption cannot be done without the log: the transaction id a payment settled under is
+  // emitted, never stored (§8 step 4). A build with no index wired says so rather than
+  // answering 401 to receipts that are perfectly good.
+  if (!deps.index) {
+    res.status(501).json({
+      error: "redemption is not available on this build",
+      detail: `${QUORUM_RECEIPT_HEADER} needs an index to resolve a transaction id to a deposit. Set SUBGRAPH_URL.`,
+    });
+    return;
+  }
+
+  const receipt = decodeRedemptionReceipt(presented);
+  if (!receipt) {
+    res.status(401).json({
+      error: "receipt is not a valid proof",
+      detail: `${QUORUM_RECEIPT_HEADER} must be base64 JSON with accountId, poolId, transaction, validUntil and signature`,
+    });
+    return;
+  }
+
+  // §8 rule 1, before any read. `redeem` checks it again and cannot rely on this one, but every
+  // check below costs paid contract queries, and a receipt that is out of date should cost none
+  // of them - it is the cheapest request to send and would otherwise be the dearest to answer.
+  const stale = expiredProof(receipt);
+  if (stale) {
+    refuse(res, resourceUrl, stale);
+    return;
+  }
+
+  // The pool must be one that sold this URL. `sellingPoolFor` is no help here and would be
+  // wrong: by the time a seat is worth redeeming the pool has stopped selling, which is the
+  // normal case rather than an error.
+  let pools: bigint[];
+  try {
+    pools = await deps.registry.poolsFor(resourceUrl);
+  } catch (error) {
+    refuse(res, resourceUrl, unreadable("the pools for this resource could not be read", error));
+    return;
+  }
+  const claimed = pools.find((poolId) => poolId.toString() === receipt.poolId);
+  if (claimed === undefined) {
+    // Same answer as a bad signature, and deliberately: a receipt naming a pool that never sold
+    // this URL is a claim about the wrong thing, and distinguishing it here would say which
+    // pools exist to anyone who asks.
+    res.status(401).json({ error: "receipt is not a valid proof for this resource" });
+    return;
+  }
+
+  let availability: PoolAvailability;
+  try {
+    availability = await deps.registry.availability(claimed);
+  } catch (error) {
+    refuse(res, resourceUrl, unreadable("the pool's state could not be read", error));
+    return;
+  }
+  const { terms, state } = availability;
+  const index = deps.index;
+  const outcome = await redeem(
+    {
+      network: deps.network,
+      contractId: deps.contractId,
+      accountOf: deps.accountOf,
+      depositFor: (poolId, hederaTxId) => index.depositFor(poolId, hederaTxId),
+      depositAt: (poolId, depositId) => deps.pools.depositAt(poolId, depositId),
+    },
+    { receipt, resourceUrl, terms, state },
+  );
+
+  if (outcome.ok) {
+    // The same licence the 200 on the payment path serves. A seat is a seat however it is
+    // presented, and a redemption that returned something different would make the receipt a
+    // second-class way to hold one.
+    res.status(200).json(
+      licence({
+        benchmark,
+        contributors: terms.seats,
+        minimumContributors: terms.threshold,
+        licensee: receipt.accountId,
+        poolId: terms.poolId.toString(),
+        settledUnder: receipt.transaction,
+      }),
+    );
+    return;
+  }
+
+  refuse(res, resourceUrl, outcome, { terms, state });
+}
+
+/**
+ * One refusal, one response - §6's rows for redemption, in one place.
+ *
+ * Every refusal on this path comes through here, including the ones raised before the pool is
+ * known: `statusFor` owns the status, so a read that fails in the handler and one that fails
+ * inside `redeem` cannot answer differently, and a row that gains a header or a body field
+ * gains it once.
+ *
+ * A **503** carries `Retry-After`, because unlike every other refusal here, trying again really
+ * is the right thing for this payer to do - and its `cause` is logged and never sent. That text
+ * describes how this coordinator is wired; the payer can act on none of it, and a refusal is a
+ * poor place to publish it.
+ */
+function refuse(
+  res: Response,
+  resourceUrl: string,
+  refusal: RedemptionRefusal,
+  pool?: { terms: PoolTerms; state: PoolState },
+): void {
+  const body: Record<string, unknown> = { error: refusal.reason, detail: refusal.detail };
+  // §9 keeps reversal off this server, so a refusal that means "your money is owed back" says
+  // where to get it without this server being involved in the getting.
+  if (refusal.reason === "no-seat" || refusal.reason === "pool-expired") body.reclaim = refusal.reclaim;
+  if (refusal.reason === "still-filling" && pool) body.pool = poolSummary(pool.terms, pool.state);
+  if (refusal.reason === "no-such-deposit" && refusal.indexedBlock !== undefined) {
+    body.indexedBlock = refusal.indexedBlock.toString();
+  }
+  if (refusal.reason === "index-unavailable") {
+    console.error(`redemption for ${resourceUrl} could not be decided: ${refusal.detail} - ${refusal.cause}`);
+    res.set("Retry-After", "5");
+  }
+  res.status(statusFor(refusal)).json(body);
+}
+
 function poolSummary(terms: PoolTerms, state: PoolState) {
   return {
     poolId: terms.poolId.toString(),
@@ -341,8 +520,9 @@ async function main(): Promise<void> {
     publicBaseUrl: cfg.publicBaseUrl,
     coordinatorAccountId: cfg.operatorId,
     coordinatorAddress,
-    evmAddressOf: (accountId) => evmAddressOf(cfg.mirrorUrl, accountId),
+    accountOf: (accountId) => accountOf(cfg.mirrorUrl, accountId),
     coordinatorBalanceTinybars: () => balanceTinybars(cfg.mirrorUrl, cfg.operatorId),
+    index: cfg.subgraphUrl ? new GraphClient({ url: cfg.subgraphUrl }) : undefined,
   });
 
   app.listen(cfg.port, () => {
@@ -352,6 +532,13 @@ async function main(): Promise<void> {
     console.log(`  contract     ${deployment.contractId}`);
     console.log(`  coordinator  ${cfg.operatorId}  ${coordinatorAddress}`);
     console.log(`  facilitator  ${cfg.facilitatorUrl}`);
+    // Said out loud either way: a coordinator that silently cannot redeem looks identical to
+    // one that can, right up until a payer with a met pool presents a receipt.
+    console.log(
+      cfg.subgraphUrl
+        ? `  index        ${cfg.subgraphUrl}`
+        : `  index        (none - SUBGRAPH_URL unset, so redemption answers 501)`,
+    );
     for (const benchmark of BENCHMARKS) {
       console.log(`  selling      ${resourceUrlFor(cfg.publicBaseUrl, benchmark.slug)}`);
     }

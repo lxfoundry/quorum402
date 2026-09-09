@@ -144,7 +144,7 @@ verified without reading the whole tree.
 | Partner | What we use it for | Where in this repo |
 |---|---|---|
 | **Hedera** | Settlement. A pool's funds are held by the contract's own Hedera account, credited by a native `CryptoTransfer` that runs no code and cannot be refused, and paid out in tinybars | [`QuorumPools.sol:226`](contracts/QuorumPools.sol#L226) records a settled payment · [`:300`](contracts/QuorumPools.sol#L300) releases · [`:336`](contracts/QuorumPools.sol#L336) refunds · [`:553`](contracts/QuorumPools.sol#L553) is the one place value moves · [`src/x402/hedera-exact.ts`](src/x402/hedera-exact.ts) builds the payment, [`facilitator.ts`](src/x402/facilitator.ts) settles it |
-| **The Graph** | Pool state. Who paid into which pool, whether it reached quorum in time, and where the money went — none of which the contract keeps, all of which it emits | [`subgraph/src/mappings.ts`](subgraph/src/mappings.ts) rebuilds state from events · [`subgraph/schema.graphql`](subgraph/schema.graphql) is what that state looks like · [`subgraph/subgraph.template.yaml`](subgraph/subgraph.template.yaml) binds it to the contract |
+| **The Graph** | Pool state, and **one fact the chain cannot answer**. The transaction id a payment settled under is emitted and never stored, so redeeming a seat has to resolve it through the log — the index sits in the request path, not beside it | [`subgraph/src/mappings.ts`](subgraph/src/mappings.ts) rebuilds state from events · [`subgraph/schema.graphql`](subgraph/schema.graphql) is what that state looks like · [`src/graph/client.ts`](src/graph/client.ts) is what the coordinator asks · [`src/server/redeem.ts:176`](src/server/redeem.ts#L176) is where a redemption depends on the answer |
 
 ---
 
@@ -172,6 +172,7 @@ src/
   pool/       the contract client, and the deployment record
   hedera/     the mirror node: an account's network address, and its balance
   server/     the coordinator - what a 402 offers, what it checks before settling, what it records
+  graph/      the subgraph client: which deposit a settlement became
   buyer/      a buyer that answers a quorum 402 with no human in the loop
   benchmark/  the resource being sold, and why one buyer cannot buy it alone
 scripts/      deployment, the demo, and checks against Hedera testnet that anyone can re-run

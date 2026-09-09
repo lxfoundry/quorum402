@@ -49,6 +49,7 @@ was rejected.
 | 2026-09-08 | `specs/quorum-scheme.md` and ADR 0005 | Read the x402 v2 specification, its HTTP transport and the `exact` scheme documents, then drafted the scheme spec and the decision record against them | Set the design in a question-by-question session before a line was written: that a legacy `exact` client must still be able to pay, that entitlement is derived from chain state rather than held in a session, that pools are opened by the seller and never by the server, and that the scheme nests its hold binding rather than referencing it |
 | 2026-09-08 | ADR 0006 and the coordinator's payment leg (`src/server/`) | Found that the solvency guard's arithmetic cancels, so every `recordDeposit` precondition can be checked before the irreversible step; wrote the pool registry, the requirement builders, the payer derivation and the preflight gate, with tests at each boundary | Set the rule the design had to satisfy — that every condition for recording must hold *before* settle is relayed — and rejected the first design's post-settlement balance polling. Chose an HCS topic over a private failure store, on the grounds that the coordinator's own failures should not be the only events nobody else can audit |
 | 2026-09-08 | The coordinator over HTTP (`src/server/index.ts`, `src/buyer/agent.ts`) | Wrote the §6 lifecycle, the receipt, the buyer that answers a 402 on its own, and tests driving every status-table row over a real listening server with the chain stubbed | Approved the testnet spend and set its bound. Called for a seller account distinct from the coordinator, which ADR 0003 assumes and a pool paying its own coordinator would not have shown |
+| 2026-09-09 | Receipt redemption (`src/server/redeem.ts`, `src/x402/redemption.ts`, `src/graph/client.ts`) | Wrote §8's canonical message and its verifier, the subgraph client the lookup needs, and the buyer's redemption path; checked every GraphQL query against the live index before building on it | Required that the index resolve only a *position*, with `payer` and `counted` read back from the contract — an indexer must not be able to make a seat valid. Rejected folding two new refusals into §6's catch-all 401, since a payer can act on only one of the three |
 
 ## 4. What was done without AI
 
@@ -287,6 +288,24 @@ Both are the shape this file already records for external specifications, turned
 stated fluently from what the API *looks* like it means, and then not checked. An unused field
 is the worst place for one, because nothing will ever disagree with it.
 
+**2026-09-09 — reported a red test suite as green, having filtered the evidence.** The suite was
+run as `npm test | grep -E "not ok|passing"`, which matched the passing line, missed the
+`1 failing` line the runner prints beside it, and returned "171 passing" to a terminal where that
+looked like a complete answer. The commit message built on it said "171 tests, up from 134". One
+test was failing, and had been failing for the whole of that commit.
+
+The defect it was hiding is nothing: an assertion used the benchmark's URL slug where the licence
+carries the benchmark's id. Twenty seconds to fix. What is worth recording is the shape - a
+verification step was run, its output was narrowed by a filter written at the same moment and for
+the same convenience, and the narrowing was never treated as part of what had to be checked. A
+grep over test output is a claim about which lines can carry bad news, and that claim was wrong
+here without ever being examined.
+
+It is the same failure as the mirror-lag script the day before, one level up. There the fact was
+known and not applied; here the check was run and its result was not read. Both produce a report
+that is confidently the opposite of the truth, and in both cases the tool that would have caught
+it was already in hand and used partially.
+
 ## 6. Review, and what it caught
 
 The contract was reviewed by a second Claude Code session given only the diff, the spec and
@@ -336,3 +355,106 @@ unauthenticated admin port and explains why at length; `docker-compose.yml`, wri
 day, published it on every interface along with IPFS's RPC and postgres. The same question was
 answered twice, correctly once, and nothing reconciled the two — one file's reasoning does not
 propagate to another just because the same session wrote both.
+
+The redemption branch was reviewed the same way, and this time the review was given the spec
+*as it stood before the branch* alongside the branch's own additions to it, because the branch
+amended §6 and §8 as well as implementing them. A reviewer handed only the current spec would
+have checked the code against prose the code had just written, which is not a check.
+
+Nothing critical again: the ordered checks, the two-hop deposit resolution, the ledger-address
+comparison and the `Met`-or-`Released` rule all held when traced independently, and no way was
+found to obtain a seat without a valid signature or to escalate through a hostile index.
+
+What it found sorts into two kinds, and only one of them is the kind the earlier reviews found.
+
+The familiar kind: §6.2's diagram listed a replay check among the pre-flight's conditions, and
+that check was dead in production — `isRecorded` was written for it, tested through an injected
+stub, and never wired to anything. Prose asserting a property nothing reached, for the third
+review running. Drawing the band accurately then turned up two more of the same: two contract
+reads the diagram showed happening that were in fact one read carried and examined twice.
+
+The unfamiliar kind is worth more. Two defects were not in the diff at all but in what the diff
+now interacted with. `evmAddressOf` had quietly acquired a signing-key requirement when
+`accountOf` was added for §8, because it was rewritten to delegate to it — so a refactor made
+for redemption changed who was allowed to *pay*, and stopped the coordinator booting on a
+multi-key account, in a function neither path's author was looking at. And the subgraph became
+a request-path dependency in this branch without any of its failure modes being handled: an
+index outage answered 500 to buyers holding good seats, with the upstream error echoed back.
+
+Both are the same shape, and it is not the spec-versus-code gap: it is a change whose blast
+radius was larger than the thing being changed. Reviewing the diff catches the first kind
+because the claim and the code are both in the diff. Catching the second needs someone to ask
+what *else* now depends on the lines that moved — which is why the review was asked to read
+full files rather than the diff alone.
+
+The demo path had a third variant. `npm run redeem` resolved the pool as `poolsFor(url)[0]`,
+the earliest pool ever opened for the resource, which is wrong as soon as a slug is demoed
+twice — and it already was, live. It had also never set an operator on its Hedera client, so
+the command failed before reaching its own logic. The second bug hid the first: a script that
+cannot run cannot be observed picking the wrong pool. Both were found by running it against
+testnet rather than by reading it, which is the only way either would have surfaced.
+
+A second pass over the same branch asked four reviewers a different question — not "is this
+correct" but "is this *well built*": one each on reuse, unnecessary complexity, wasted work, and
+whether each fix sat at the right depth. They ran independently and did not see each other's
+findings.
+
+The overlap is the interesting part. Three of the four independently arrived at the same place
+from different directions: the reuse reviewer found the refund selector and a base64 codec each
+written twice more; the simplification reviewer found four configuration knobs nothing sets, an
+index result with two fields nothing reads, and a dead client method; the altitude reviewer found
+that the "a read that failed is not a fact about the receipt" rule had been applied to four reads
+and missed the fifth. Different lenses, one underlying habit — **surface added in anticipation of
+a caller that never arrived, and a rule stated in more places than it was applied**.
+
+The efficiency reviewer found the sharpest single thing, and it was a comment that had become a
+lie. `redeem.ts` said expiry was checked first "so a stale receipt costs two network reads less
+than a fresh one" — and the wiring around it had since put three paid contract queries ahead of
+the clock. The check was in the right order inside the function and the wrong order in the
+system, which is a distinction no amount of reading that file would surface.
+
+Worth naming: two of these findings were repairs to fixes made earlier the same day. Work done
+under review pressure goes deep enough on the thing being pointed at and stops there — the 503
+rule was applied to every read the reviewer had listed and to none it had not. That is not a
+failure of care; it is what "address the feedback" tends to mean in practice, and it is a reason
+to re-read a fix after the pressure is off.
+
+A third pass asked the narrowest question yet, and it was the one the paragraph above had just
+argued for: not "is this branch correct" but "are the *repairs* correct". The reviewer was given
+the four commits the first two reviews produced, and the branch only as context.
+
+It found a regression neither earlier pass could have caught, because it did not exist when they
+ran. `depositFor` had returned `IndexedDeposit | undefined`; consolidating the lag into it made
+it return an object that is always present, with the position as an optional field. The demo
+script still tested the result for truthiness. That check is now always true, so `npm run redeem`
+took the first pool it tried without asking the index anything — the newest pool naming the slug
+— and the refusal below it became unreachable in the same stroke. The visible symptom is a payer
+being told 404, that their settlement never happened or is not yet indexed, about a settlement
+that happened and is indexed. It re-broke a bug fixed on this same branch nine commits earlier.
+
+Three safety nets had the same hole. The deletion audit checked that removed things had no
+callers, and this was not a deletion — it was a signature change, which needs the opposite
+question asked. `tsc` sees nothing wrong with testing an object for truthiness, because there is
+nothing wrong with it. The ESLint rule that catches exactly this, `no-unnecessary-condition`,
+lives in the type-aware set this repo turns off for speed. And the one directory where all three
+gaps overlap is `scripts/`, which has no tests at all.
+
+The second finding is the same shape from the other side. Folding `_meta` into the deposit query
+saved a round trip and silently spent a `.catch(() => undefined)` that had been protecting it —
+the tolerance existed only because the call used to live somewhere else, and moving it did not
+look like removing it. The result was that an index able to say exactly where a deposit sat would
+answer 503 to a payer holding a good seat, because a diagnostic field beside the answer had
+failed. GraphQL returns partial data with errors by design, so this is the ordinary case, not an
+exotic one.
+
+Underneath both: **the reviews found the code wrong, and the fixes for them were written against
+the diff rather than against the callers.** A repair changes a signature far more often than it
+changes a behaviour, and a signature change puts its consequences outside the diff by definition.
+That is why the earlier passes kept finding blast-radius defects and this one did too — the
+category never closed, it just moved to whatever had been edited most recently.
+
+Worth recording separately: `src/graph/client.ts` had no tests. Every test in the suite stubbed
+`depositFor` and checked what the server did with the result, so the response shape — the single
+thing a subgraph is free to vary, and where both of these defects lived — had only ever been
+exercised against testnet, on the path where nothing goes wrong. It has eight now, seven of them
+about partial success.
