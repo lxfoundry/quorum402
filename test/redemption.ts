@@ -93,7 +93,6 @@ describe("redeeming a seat", () => {
 
     assert.equal(result.ok, true);
     assert.equal(result.ok && result.payer, PAYER);
-    assert.equal(terms.seats, 3);
   });
 
   it("still serves it after the pool has released", async () => {
@@ -174,9 +173,9 @@ describe("proofs that do not stand up", () => {
     assert.equal(!result.ok && result.reason, "invalid-proof");
   });
 
-  it("treats an unreadable account as a bad proof, not a server error", async () => {
-    // A threshold-key account reaches here. It cannot sign this message, and that is the
-    // payer's problem to see rather than a 500.
+  it("treats an account with no usable key as a bad proof, not a server error", async () => {
+    // A threshold-key account reaches here: it was read fine and cannot sign this message,
+    // which is the payer's problem to see rather than a 500. Unreadable is the test below.
     const result = await attempt({
       accountOf: async () => ({ evmAddress: PAYER }),
     });

@@ -95,7 +95,7 @@ interface Stubs {
   alreadyRecorded?: boolean;
   /** The replay check itself failing, as distinct from answering `false`. */
   isRecordedThrows?: boolean;
-  /** The ledger's answer about an account. Throws for a key that cannot sign. */
+  /** The ledger's answer about an account. A key that cannot sign is a missing `key`, not a throw. */
   accountOf?: ServerDeps["accountOf"];
 }
 
@@ -342,6 +342,30 @@ describe("§6 lifecycle", () => {
 
     assert.equal(res.status, 402);
     assert.match(String(res.body.error), /redeemable seat/);
+    assert.equal(settled, false);
+  });
+
+  it("402s without repeating the ledger's words, when the account cannot be read", async () => {
+    // The sibling of the test above, asking a different question: that account was read and has
+    // no usable key, this one could not be asked. §6 keeps both at 402 because no money has
+    // moved - but the mirror's own text describes how this coordinator is wired, so it goes to
+    // the log and not to the payer, who can do nothing with it either way.
+    let settled = false;
+    const d = deps({
+      accountOf: async () => {
+        throw new Error("mirror node returned 503 for account 0.0.1001");
+      },
+    });
+    d.facilitator.settle = async () => {
+      settled = true;
+      return { success: true };
+    };
+
+    const res = await request(d, `/benchmark/${SLUG}`, { [PAYMENT_SIGNATURE_HEADER]: await payment() });
+
+    assert.equal(res.status, 402);
+    assert.match(String(res.body.detail), /could not be read from the ledger/);
+    assert.doesNotMatch(JSON.stringify(res.body), /503|mirror node/);
     assert.equal(settled, false);
   });
 
