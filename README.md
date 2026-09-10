@@ -137,6 +137,11 @@ means they will not: the coordinator pays for `recordDeposit` out of its own acc
 money it cannot attribute. That is the right refusal and it used to be an invisible one — a 402 is
 built from chain reads that never ask whether this server can act on the offer, so an underfunded
 coordinator advertises real pools on real terms and turns buyers away at the last step.
+`503` with `balance-unreadable` is a different failure wearing the same status: the balance read
+itself failed, so the account is unknown rather than known to be short, and the response carries
+no `balanceTinybars` at all — a `0` there would look exactly like the shortfall it stands in for.
+Both answers mean not-ready, and the remedy is not the same: one is cleared by a faucet, the other
+by waiting for the mirror node.
 `/healthz` cannot answer this and deliberately does not try: it reads nothing external, because it
 is what the platform health check watches and an unreachable mirror node is no reason to replace
 the machine.
