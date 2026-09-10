@@ -291,7 +291,30 @@ function licenceCard(licence) {
 
 // --------------------------------------------------------------------------------- seller view
 
+/**
+ * The seller's form, built once and kept.
+ *
+ * Everything else on this page is replaced on every poll, which is what a screen showing the
+ * chain's current answer should do. It is the wrong treatment for four dropdowns holding a
+ * choice the seller is part-way through making: rebuilt every four seconds, the selection was
+ * back to the first option before they could reach the button.
+ *
+ * Safe to keep because all four option lists are server-side constants - `BENCHMARKS`,
+ * `TTL_CHOICES`, `SEAT_HBAR_CHOICES` - so there is no state a later poll could carry that would
+ * leave the form stale. It also survives a trip through a buyer's screen and back, because the
+ * same node is re-appended rather than rebuilt.
+ */
+let sellForm = null;
+
 function sellerPanels() {
+  // The release cards are rebuilt, deliberately: unlike the form, they *are* pool state.
+  const panels = [sellForm ?? buildSellForm()];
+  const met = state.services.filter((s) => s.pool && s.pool.state === "Met");
+  for (const service of met) panels.push(releaseCard(service));
+  return panels;
+}
+
+function buildSellForm() {
   const card = el("div", "card");
   card.append(el("h3", null, "Open a pool"));
   card.append(el("div", "why", "Four choices, one click. Nothing about opening a pool goes through the coordinator — it finds out by reading the chain, like anyone else."));
@@ -316,10 +339,8 @@ function sellerPanels() {
     });
   card.append(button);
 
-  const panels = [card];
-  const met = state.services.filter((s) => s.pool && s.pool.state === "Met");
-  for (const service of met) panels.push(releaseCard(service));
-  return panels;
+  sellForm = card;
+  return card;
 }
 
 function releaseCard(service) {
