@@ -98,10 +98,25 @@ export class PoolRegistry {
    * hands back the newest, which is not a pool to pay into but is the one worth reporting.
    */
   async sellingPoolFor(resourceUrl: string): Promise<PoolAvailability | undefined> {
+    return (await this.advertisedFor(resourceUrl)).pool;
+  }
+
+  /**
+   * The same answer, plus how many pools have ever named this URL.
+   *
+   * One call rather than `sellingPoolFor` followed by `poolsFor`, because `scan` reads
+   * `poolCount` off the contract every time it runs and asking twice pays for that twice. The
+   * count is what lets a caller say *which* of a resource's pools it is showing - one pool of
+   * four reads very differently from the only pool there has ever been.
+   */
+  async advertisedFor(
+    resourceUrl: string,
+  ): Promise<{ pool: PoolAvailability | undefined; poolCount: number }> {
+    const poolIds = await this.poolsFor(resourceUrl);
     let latest: PoolAvailability | undefined;
-    for (const poolId of await this.poolsFor(resourceUrl)) {
+    for (const poolId of poolIds) {
       const availability = await this.availability(poolId);
-      if (availability.available) return availability;
+      if (availability.available) return { pool: availability, poolCount: poolIds.length };
       latest = availability;
     }
     // Nothing is selling. Hand back the *most recent* match anyway when there was one: the caller
@@ -116,7 +131,7 @@ export class PoolRegistry {
     // oldest is typically a pool released weeks ago and reads as though the demo were stuck.
     //
     // Free: the loop has already read every pool whenever none of them could sell.
-    return latest;
+    return { pool: latest, poolCount: poolIds.length };
   }
 
   /** Whether this pool can take a payment now, and if not, why not. */

@@ -174,6 +174,11 @@ function serviceCard(service, seller) {
   facts.append(countdown(pool));
   card.append(facts);
   card.append(el("div", "note", `Pool ${pool.poolId} · all-or-nothing: if the deadline passes short, every payer is refunded.`));
+  // Only when the card is showing a pool nobody can pay into. While one is selling, it is the
+  // pool - there is nothing to disambiguate, and a count would be trivia beside a live button.
+  if (!pool.available && service.poolCount > 1) {
+    card.append(el("div", "note", `The newest of ${service.poolCount} pools opened for this service.`));
+  }
 
   if (!seller) {
     const button = el("button", null, `Pay ${pool.seatHbar} ℏ for a seat`);
@@ -201,10 +206,22 @@ function closedBecause(reason) {
 
 /** One panel per seat this wallet holds. A buyer can hold several at once, in different states. */
 function seatPanels() {
-  if (!state.seats.length) {
-    return [el("div", "empty", "No seats yet. Pay into a pool on the left, and it appears here.")];
+  const panels = state.seats.length
+    ? state.seats.map(seatCard)
+    : [el("div", "empty", "No seats yet. Pay into a pool on the left, and it appears here.")];
+  // Why the list can look short. These are this address's real deposits into pools that name
+  // another coordinator - an `npm run e2e` run on an ephemeral port, almost always - and this
+  // one cannot redeem them. Better said than silently filtered.
+  if (state.seatsElsewhere) {
+    panels.push(
+      el(
+        "div",
+        "empty",
+        `${state.seatsElsewhere} more seat(s) bought against a different coordinator are not shown — this one cannot redeem them.`,
+      ),
+    );
   }
-  return state.seats.map(seatCard);
+  return panels;
 }
 
 function seatCard(seat) {

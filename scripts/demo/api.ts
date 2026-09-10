@@ -36,7 +36,7 @@ import { balanceTinybars } from "../../src/hedera/mirror.js";
 import { PoolsClient } from "../../src/pool/client.js";
 import { poolSummary } from "../../src/server/index.js";
 import type { Coordinator } from "../../src/server/index.js";
-import type { PoolAvailability } from "../../src/server/pools.js";
+import type { PoolAvailability, PoolRegistry } from "../../src/server/pools.js";
 import type { Receipt } from "../../src/server/receipt.js";
 import { hbarToTinybars, tinybarsToHbar } from "../../src/x402/hedera-exact.js";
 import { ProtocolLog } from "./log.js";
@@ -158,7 +158,9 @@ async function stateFor(
   // what makes it one read per pool per poll. `balances.all()` hits the mirror node instead,
   // shares nothing with either, and still goes in parallel.
   const [services, held] = await Promise.all([servicesFor(ctx, pools, now), balances.all()]);
-  const seats = mine ? await seatsFor(ctx, pools, mine.evmAddress, mine.label, now) : [];
+  const mySeats = mine
+    ? await seatsFor(ctx, pools, mine.evmAddress, mine.label, now)
+    : { seats: [], elsewhere: 0 };
 
   return {
     network: deps.network,
@@ -174,7 +176,8 @@ async function stateFor(
     })),
     choices: { ttl: TTL_CHOICES, seatHbar: SEAT_HBAR_CHOICES },
     services,
-    seats: seats.map((seat) => withLinks(deps.network, seat)),
+    seats: mySeats.seats.map((seat) => withLinks(deps.network, seat)),
+    seatsElsewhere: mySeats.elsewhere,
     log: ctx.log.tail(),
   };
 }
@@ -191,7 +194,7 @@ async function servicesFor(ctx: DemoContext, cache: PoolStatusCache, now: number
   return Promise.all(
     BENCHMARKS.map(async (benchmark) => {
       const resourceUrl = resourceUrlFor(cfg.publicBaseUrl, benchmark.slug);
-      const selling = await cache.advertised(resourceUrl);
+      const { pool, poolCount } = await cache.advertised(resourceUrl);
       return {
         slug: benchmark.slug,
         id: benchmark.id,
@@ -201,7 +204,16 @@ async function servicesFor(ctx: DemoContext, cache: PoolStatusCache, now: number
         unitPrice: benchmark.unitPrice,
         resourceUrl,
         thresholds: [benchmark.minimumContributors, benchmark.minimumContributors + 1],
-        pool: selling ? poolCard(selling, now) : undefined,
+        pool: pool ? poolCard(pool, now) : undefined,
+        /**
+         * How many pools have ever named this resource, so the page can say which one it shows.
+         *
+         * The card names a pool id and offers no way to reach any other, which reads as though
+         * the rest were missing. They are not: a buyer picks a service and the coordinator
+         * resolves the pool, and this is the page admitting there were others rather than
+         * quietly implying there were not.
+         */
+        poolCount,
       };
     }),
   );
@@ -232,6 +244,13 @@ function poolCard(availability: PoolAvailability, now: number) {
  * The index is asked once for the whole list. Then the chain is asked about only the pools that
  * survive the filter and could still change - a `Released` pool cannot, and neither can one
  * already stamped `Expired`.
+ *
+ * `elsewhere` counts what the filter dropped. Those are real deposits this address really made,
+ * against a coordinator on another base URL - almost always an `npm run e2e` run, which stands a
+ * server up on an ephemeral port and names it in the pools it opens. They cannot be shown here,
+ * because this coordinator would answer 401 for them and a Redeem button beside one would lie.
+ * Saying how many there are is the difference between a filtered list and a list that looks
+ * suspiciously short.
  */
 async function seatsFor(
   ctx: DemoContext,
@@ -239,7 +258,7 @@ async function seatsFor(
   evmAddress: string,
   label: string,
   now: number,
-): Promise<SeatRow[]> {
+): Promise<{ seats: SeatRow[]; elsewhere: number }> {
   const { cfg } = ctx.coordinator;
   const sells = new Map(
     BENCHMARKS.map((b) => [resourceUrlFor(cfg.publicBaseUrl, b.slug), b.slug] as const),
@@ -261,8 +280,11 @@ async function seatsFor(
   const relevant = [...remembered.map((s) => s.pool), ...indexed.map((d) => d.pool)].filter((p) =>
     sells.has(p.resourceUrl),
   );
+  // Only the indexed ones need counting: a remembered seat was watched by this process, so its
+  // pool names this coordinator by construction.
+  const elsewhere = indexed.filter((d) => !sells.has(d.pool.resourceUrl)).length;
   const live = await cache.livePools(relevant);
-  return mergeSeats({ indexed, remembered, sells, live, now });
+  return { seats: mergeSeats({ indexed, remembered, sells, live, now }), elsewhere };
 }
 
 /** Explorer links, added last so nothing above has to carry a network around. */
@@ -414,7 +436,7 @@ async function redeem(
   const { cfg, deps, contractId } = ctx.coordinator;
   const wallet = ctx.wallets.signing(body.wallet);
   const now = Math.floor(Date.now() / 1000);
-  const seats = await seatsFor(ctx, cache, wallet.evmAddress, wallet.label, now);
+  const { seats } = await seatsFor(ctx, cache, wallet.evmAddress, wallet.label, now);
   const seat = seats.find((s) => s.poolId === String(body.poolId));
   if (!seat) throw new Error(`${wallet.label} holds no seat in pool ${body.poolId}`);
 
@@ -491,6 +513,9 @@ async function release(ctx: DemoContext, body: { poolId: string }) {
 
 // -------------------------------------------------------------------------------------- caching
 
+/** What the registry says about one resource: the pool to show, and how many it has had. */
+type Advertised = Awaited<ReturnType<PoolRegistry["advertisedFor"]>>;
+
 /**
  * Chain reads, reused for a poll's worth.
  *
@@ -499,21 +524,18 @@ async function release(ctx: DemoContext, body: { poolId: string }) {
  * `Released` pool cannot change again, and neither can an `Expired` one.
  */
 class PoolStatusCache {
-  private readonly advertisedByUrl = new Map<
-    string,
-    { at: number; value: PoolAvailability | undefined }
-  >();
+  private readonly advertisedByUrl = new Map<string, { at: number; value: Advertised }>();
   private readonly liveById = new Map<string, { at: number; terminal: boolean; value: LivePool }>();
   // The reads themselves, while they are in flight. A cache that only fills on resolution is
   // no help to the caller that arrives during the read it would have hit, and those are the
   // callers there are: one request fans out to every panel on the page at once. Cleared in
   // `finally`, so a failed read leaves nothing behind for the next one to join.
-  private readonly resolving = new Map<string, Promise<PoolAvailability | undefined>>();
+  private readonly resolving = new Map<string, Promise<Advertised>>();
   private readonly reading = new Map<string, Promise<LivePool>>();
 
   constructor(private readonly ctx: DemoContext) {}
 
-  async advertised(resourceUrl: string): Promise<PoolAvailability | undefined> {
+  async advertised(resourceUrl: string): Promise<Advertised> {
     const hit = this.advertisedByUrl.get(resourceUrl);
     if (hit && Date.now() - hit.at < POOL_CACHE_MS) return hit.value;
 
@@ -525,16 +547,20 @@ class PoolStatusCache {
     return read;
   }
 
-  private async readAdvertised(resourceUrl: string): Promise<PoolAvailability | undefined> {
+  private async readAdvertised(resourceUrl: string): Promise<Advertised> {
     // Kept as the registry returned it. Flattening `available` into "the reason is undefined"
     // would mean decoding it again at the render site, and a boolean round-tripped through a
     // string is one more thing that can be got backwards.
-    const value = await this.ctx.coordinator.deps.registry.sellingPoolFor(resourceUrl);
+    //
+    // `advertisedFor` rather than `sellingPoolFor` for the count that comes with it: both
+    // answers fall out of one scan, and the page uses the count to say which of a resource's
+    // pools the card is showing.
+    const value = await this.ctx.coordinator.deps.registry.advertisedFor(resourceUrl);
     this.advertisedByUrl.set(resourceUrl, { at: Date.now(), value });
     // The advertised pool is almost always one a buyer also holds a seat in, and this read
     // answers the seat list's question too. Recording it here means the pool on screen is read
     // once per poll rather than once for each panel showing it.
-    if (value) this.remember(value);
+    if (value.pool) this.remember(value.pool);
     return value;
   }
 
