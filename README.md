@@ -256,12 +256,132 @@ verified without reading the whole tree.
 
 ## Running it
 
-TODO — prerequisites, install, configure, deploy to testnet, run the demo. Verified from a clean
-clone, not from a developer's machine.
+**What you need:** Node 22 or newer, git, and a funded Hedera testnet account — an account id in
+`0.0.x` form plus its ECDSA secp256k1 private key, both from
+[portal.hedera.com](https://portal.hedera.com). Nothing else. No Docker, no local chain, no API
+key, and no deployment of your own: the facilitator is public and the contract is already on
+testnet.
+
+### 1. Clone, install, build
 
 ```bash
-# TODO
+git clone https://github.com/lxfoundry/quorum402.git
+cd quorum402
+npm ci
+npm run build
 ```
+
+**`npm run build` is not optional.** `artifacts/` is gitignored and the contract client reads the
+ABI out of it lazily, so an unbuilt tree starts, answers `/healthz`, and fails on the first request
+that touches the chain — which is a confusing way to find out, and the reason the
+[`Dockerfile`](Dockerfile) compiles inside the image.
+
+Two commands prove the tree before it is pointed at a network, and neither touches one:
+
+```bash
+npm test                        # the contract's arithmetic on an in-process EVM, and the
+                                # coordinator over a real listener with the chain, the
+                                # facilitator and the index all stubbed
+npm run lint && npm run typecheck
+```
+
+### 2. Configure
+
+```bash
+cp .env.example .env
+```
+
+Two values are yours; every other line has a working default and can be left alone.
+
+| Variable | |
+|---|---|
+| `HEDERA_OPERATOR_ID` | your testnet account, `0.0.x`. ⚠️ **`.env.example` ships a real id as an illustration — replace it, or you will be signing for an account whose key you do not have** |
+| `HEDERA_OPERATOR_KEY` | that account's ECDSA secp256k1 private key, hex. `.env` is gitignored and this repository is public: keep it that way |
+
+```bash
+npm run check:env
+```
+
+verifies every external assumption the payment path depends on *before* any transaction is built —
+the key parses and actually matches the account, the account exists and is funded, the facilitator
+is reachable and advertises `hedera:testnet`, the mirror node answers, the recorded contract is
+there. It spends nothing, and it names the assumption that broke rather than failing later
+somewhere that looks unrelated. An unfilled `.env` is the first thing it catches.
+
+### 3. Make some buyers
+
+A threshold counts *distinct* payers, so one account paying three times is not a crowd. These are
+throwaway testnet accounts, funded from the operator:
+
+```bash
+npm run accounts:create                        # buyer1..buyer4, 20 ℏ each
+npm run accounts:create -- --add seller 20     # where a filled pool pays out
+```
+
+That writes `.accounts.json`, which holds **private keys** and is gitignored under the same rule as
+`.env`. Four buyers rather than three because a pool's threshold may be either, and the crowd that
+*cannot* reach the larger one is the half of all-or-nothing that is easy to leave untested.
+
+### 4. Run it
+
+The whole primitive in a browser — one seller, four buyers, a handful of clicks:
+
+```bash
+npm run demo                    # then open http://localhost:4021/ui
+```
+
+[The demo UI](#the-demo-ui) below is what that page shows and what it deliberately does not.
+
+By hand is the same code path, one seat at a time. `npm run server` is the coordinator a host
+would run, and it holds no buyer keys:
+
+```bash
+npm run server                                        # terminal 1
+npm run pool:open -- --slug agent-spend-eu            # terminal 2 — the seller, not the server
+curl -si http://localhost:4021/benchmark/agent-spend-eu     # the 402, and the offer in the header
+npm run buy -- agent-spend-eu buyer1                  # a seat: 402 → pay → 202 + receipt
+npm run buy -- agent-spend-eu buyer2
+npm run buy -- agent-spend-eu buyer3                  # the one that completes the crowd gets 200
+npm run redeem -- agent-spend-eu buyer1               # what the earlier 202 is worth now
+npm run pool:release -- <poolId>                      # pays the seller. Anyone may call it
+```
+
+The slugs are `agent-spend-eu` and `agent-inference-eu`. A pool takes its threshold and seat price
+from the benchmark unless `--threshold` and `--hbar` say otherwise, and lives 900 seconds unless
+`--ttl` does — short enough that a pool forgotten at the end of a session expires into refundable
+on its own.
+
+Set nothing else and everything runs against `http://localhost:4021`. To pay the hosted
+coordinator instead, open the pool against it — `PUBLIC_BASE_URL` is exact-matched on-chain, and
+[Where they run](#where-they-run) above is what happens when the two halves disagree.
+
+### Deploying your own contract
+
+Not needed to run any of the above: [deployments/hedera-testnet.json](deployments/hedera-testnet.json)
+is committed, and `npm run check:deployment` proves the contract it names is this source. If you
+want your own anyway:
+
+```bash
+npm run build && npm run deploy
+```
+
+It creates the contract with **no admin key**, which is irreversible — a contract created without
+one can never be given one. That is [ADR 0003](specs/adr/0003-pool-authority-model.md) expressed as
+a deployment rather than a promise, and it is why nobody, including the deployer, can update or
+delete it.
+
+### What of this was verified, and how
+
+Everything through step 2 was run on a **clean clone of `main` on 2026-09-10** — `git clone`,
+`npm ci` (26 s), `npm run build` (solc 0.8.28, 4 files), `npm test` (235 passing, no network),
+`npm run lint`, `npm run typecheck`, and `npm run check:env` against an unfilled `.env` to confirm
+it says which variable is missing. Node 22.18.0, npm 10.9.3, Windows.
+
+The steps from `check:env` onward need **your own funded account**, so they cannot be verified on
+your behalf — nobody can spend testnet HBAR for you. What they do is exercised by
+[`npm run e2e`](#verifying-it-end-to-end), which drives the same paths against Hedera testnet, the
+same facilitator and the live subgraph — not from CI, which has no keys and spends nothing, but by
+hand before each of the merges that claimed them.
 
 ## The demo UI
 
