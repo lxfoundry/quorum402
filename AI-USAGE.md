@@ -57,6 +57,7 @@ was rejected.
 | 2026-09-10 | Reading the demo page, and a fourth buyer (`public/`, `src/server/pools.ts`, `scripts/`) | Diagnosed three unrelated pool ids on one screen by querying the live subgraph for every pool the contract holds, rather than by reading the code - which is what found it, because `sellingPoolFor`'s fallback to the *earliest* matching pool reads as a defensible choice in isolation and only the real data shows it naming a pool released weeks earlier. Then moved seat occupancy onto the card that names the pool, gave the page a product identity, and checked the result by screenshotting the running page in headless Chrome at the video's 720p floor instead of reasoning about the CSS - which is how the sliced log line was found. Wrongly asserted in the plan that the new pool count was free, then found `scan` re-reads `poolCount` on every call and folded both answers into one registry method rather than pay twice | Reported that the page's pool numbering was unreadable, precisely enough to be checkable - which of the three ids appeared where. Chose to fix the crowd strip by deleting it and moving its meaning onto the pool card, over the alternative of a per-buyer subgraph query that would have made its dots true; held the line that the left column must not become a pool picker, since nothing in the `quorum` exchange carries a pool id, and required the page to disclose what it filters instead |
 | 2026-09-10 | Review of the whole branch, and two fixes from it (`public/app.js`) | Reviewed the 25-commit branch in one pass against the specs, then verified both blocking findings against the tree before acting on either - the reports' anchors have been wrong before. Rebuilt the stubbed-DOM check the earlier session threw away, and confirmed each fix by reverting *it alone* and watching its own assertion fail | Asked for the review and chose its scope, twice: first the two blocking findings and the three stale comments, then - having seen them land - every remaining Minor as well, and finally the test file the reviewer had asked for. Nothing from the review was declined on grounds of taste; the one recommendation not acted on is written into the code that carries it |
 | 2026-09-10 | The README's mechanism and setup sections (`README.md`) | Wrote the six-step walkthrough and the four load-bearing properties under it, each pointing at the code or the ADR that decided it, and the setup path underneath - then ran that path on a **clean clone of `main`** rather than describing it from this tree: `npm ci`, build, 235 tests, lint, typecheck, and the preflight's own error on an unfilled `.env`. Read every script before documenting its arguments, which is what caught an invented `--account` flag in the by-hand sequence, and read `ci.yml` before claiming CI covered the end-to-end runs, which it does not. The one step it could not finish - the network preflight, which needs a funded operator - was left unfinished rather than routed around when the harness's own guard refused to copy a key into the scratch clone, and the section states that boundary instead of implying the whole path was verified | Merged the two open pull requests, and chose the README over the remaining build options on the grounds that Hedera's track asks for setup and architecture and the page had neither. The clean-clone standard is the repository's own, written into `CLAUDE.md` before this README existed - the verification is answering a requirement set in advance, not one chosen to fit what was convenient to run |
+| 2026-09-10 | Review round on the README, and the live run behind it (`README.md`) | Answered four review comments as four commits: a mermaid sequence diagram of the whole exchange, per-step commands with their real output, and redemption promoted from an aside to step 6. Then ran the primitive end to end against the hosted coordinator to get those outputs - opening the replacement pool **first**, because `advertisedFor` returns the earliest still-selling pool, so pool 25 could only take over once 21 went terminal and the public endpoint never had a window with nothing to sell. Every transcript in the section is from that run; the two steps it did not exercise say so rather than borrowing a plausible output | Reviewed the section and asked for the evidence a reader can check rather than the description they must trust - the command each actor runs, the effect in the index, and a link that answers without a wallet or a clone. Refunded the operator the moment the run found it empty. Chose to defer demo-UI screenshots to the video rather than spend the last build afternoon on stills |
 
 ## 4. What was done without AI
 
@@ -438,6 +439,35 @@ driven by hand before the merges that claim it. Caught by grepping the workflow 
 A sentence that attributes your own manual work to automation deserves suspicion on sight: it is a
 claim about a system made from memory of that system, in the one document a judge can refute by
 opening `ci.yml`.
+
+**2026-09-10 - the hosted coordinator spent a day advertising an offer it could not honour.**
+Opening a pool for the walkthrough failed with `INSUFFICIENT_PAYER_BALANCE`, and the account was
+the coordinator's own: 0.0.10404217, down to **0.022 HBAR** against the 5 HBAR floor
+`preflight.ts` requires before it will settle anything. So every payment to the public endpoint
+would have been refused `coordinator-underfunded` - correctly, and before taking money it could not
+record, which is ADR 0006 working exactly as designed.
+
+The design was right and the deployment was still dead, which is the part worth keeping. `/healthz`
+returned 200, because it answers for the process rather than for the account it signs with. `curl`
+returned a real 402 carrying a real pool, real terms and a real deadline, because building that
+offer reads the chain and never asks whether this server can act on it. Both halves reported
+healthy while the only thing the endpoint exists to do was impossible, and **nothing anywhere would
+have said so until a buyer tried and was turned away** - a buyer who would have read the refusal as
+the pool being closed. This is the same shape as the `PUBLIC_BASE_URL` mismatch the README already
+warns about, and it went unnoticed for the same reason: the failure lives between two components
+that are each fine.
+
+It was found by accident, while reaching for something else. The honest reading is that a
+coordinator whose gate is a balance should report that balance where it reports its health, and
+`/healthz` not doing so is a gap this project has not closed - named here rather than quietly
+fixed at the end of a build day.
+
+**And a prediction made from two refusals.** Asked how to run the flow, this session warned the
+user that key-loading scripts "have been blocked by your harness guard twice today, so this may
+fail". They were not blocked, and had never been: the two refusals were of a command copying an
+operator key into a scratch directory and of one running the preflight in a context that printed
+it - both about moving a secret, neither about the scripts. Two data points, one generalisation,
+and a warning that would have talked the user out of the approach that worked.
 
 ## 6. Review, and what it caught
 
