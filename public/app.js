@@ -10,6 +10,19 @@
  * age of a log line. Polling for those would cost a contract read per second.
  */
 
+/*
+ * `<body>` ships with `busy` so the cursor and the block are right from the first paint - before
+ * this file has run there is nothing that could set them. Clearing it here is what makes that
+ * safe. The class is otherwise only ever removed by `waitFor`'s counter reaching zero, so a page
+ * whose script 404s, or fails to parse, would stay dimmed and `pointer-events: none` forever -
+ * indistinguishable from a hang, and on a machine that has just been handed the demo, the worst
+ * possible first frame. If this line runs at all, the page is operable.
+ *
+ * No flicker: the `waitFor(refresh)` at the bottom of this file puts it straight back, in this
+ * same tick, before anything is painted.
+ */
+document.body.classList.remove("busy");
+
 const POLL_MS = 4000;
 
 let state = null;
