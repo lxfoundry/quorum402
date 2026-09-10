@@ -119,9 +119,34 @@ credited to the tinybar. It needs a funded testnet operator and the buyer accoun
 
 | Service | What it serves | Endpoint |
 |---|---|---|
-| Subgraph | Pool state, indexed off Hedera testnet | <https://quorum402-subgraph.fly.dev/subgraphs/name/quorum402> |
+| **Coordinator** | The x402 resource server — the challenge, the settlement, the receipt | <https://quorum402-coordinator.fly.dev> |
+| **Subgraph** | Pool state, indexed off Hedera testnet | <https://quorum402-subgraph.fly.dev/subgraphs/name/quorum402> |
 
-Live, and answerable without a wallet or a clone:
+Both are live, and both answer without a wallet or a clone.
+
+### The 402 itself
+
+```bash
+curl -si https://quorum402-coordinator.fly.dev/benchmark/agent-spend-eu
+```
+
+`402 Payment Required`, and the `PAYMENT-REQUIRED` header is the offer
+[`specs/quorum-scheme.md`](specs/quorum-scheme.md) §5 describes: `quorum` first, carrying
+`paymentFlow: conditional`, the pool id, the threshold, how many seats are already taken and
+the deadline — then `exact` second, so a client that has never heard of this scheme can still
+pay for the resource by itself.
+
+```bash
+# grep rather than sed's I flag, and openssl rather than base64 -d: both of those are GNU spellings and neither is on a stock macOS.
+curl -sD - -o /dev/null https://quorum402-coordinator.fly.dev/benchmark/agent-spend-eu | grep -i '^payment-required:' | cut -d' ' -f2- | tr -dc 'A-Za-z0-9+/=' | openssl base64 -A -d
+```
+
+A **404** from that URL is not a broken deployment. The coordinator keeps no database and
+sells whatever the chain says is for sale, so when no pool is open against this origin there
+is nothing there to charge for — which is what the body says, in those words.
+`npm run pool:open` puts one back.
+
+### The index
 
 ```bash
 curl -s https://quorum402-subgraph.fly.dev/subgraphs/name/quorum402   -H 'content-type: application/json'   -d '{"query":"{ _meta { block { number } hasIndexingErrors } pools { id state seats threshold releasedTinybars deposits { hederaTxId tinybars counted refunded } } }"}'
@@ -135,6 +160,24 @@ The graph-node behind it is **self-hosted, because there is no alternative**: He
 [The Graph's supported networks](https://thegraph.com/docs/en/supported-networks/), and
 Hedera's own hosted service is unavailable. [subgraph/README.md](subgraph/README.md) has the
 detail, and [subgraph/fly/](subgraph/fly/) is the deployment.
+
+### Where they run
+
+The coordinator is `fly deploy` from this directory: [`fly.toml`](fly.toml) is the app and
+[`Dockerfile`](Dockerfile) builds it. Neither holds the operator key — that is a Fly secret,
+because this repository is public.
+
+The value in `fly.toml` that has to be right is `PUBLIC_BASE_URL`. A pool records its resource
+URL on-chain when it is opened, and the coordinator resolves a request by matching that string
+exactly, so a pool has to be opened against the origin that will serve it:
+
+```bash
+PUBLIC_BASE_URL=https://quorum402-coordinator.fly.dev npm run pool:open -- --slug agent-spend-eu
+```
+
+Opened against anything else, the pool is open and payable at a URL this server does not
+answer on — every request 404s, the pool fills with nobody, and both halves look fine on
+their own.
 
 ## Partner integrations
 
@@ -319,6 +362,7 @@ specs/        scheme spec, prompts and planning artifacts, written during the bu
 AI-USAGE.md   where and how AI tooling was used, and what was done by hand
 .claude/      Claude Code skills used during development (see AI-USAGE.md)
 .github/      CI - builds, lints, type-checks and tests every pull request and main
+fly.toml      the hosted coordinator, and Dockerfile the image it deploys
 ```
 
 ## AI usage
