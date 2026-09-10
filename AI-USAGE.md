@@ -54,6 +54,7 @@ was rejected.
 | 2026-09-09 | The demo UI (`scripts/demo/`, `public/`, `src/hedera/explorer.ts`) | Checked the HashScan link format against the mirror node instead of assuming it, and found the existing one was built on the spelling the API rejects; wrote the control plane, the page, and the seat rules — copied from `_isRefundable` and §8 step 5 rather than reasoned about again — then drove both scenarios against testnet | Asked for a product a buyer could recognise rather than a control panel, and for no text entry anywhere in it. Refused to let the page imply a buyer can pick a pool, since nothing in the `quorum` exchange carries a pool id and every such button but one would be a lie. Ruled out hosting it, because the process holding the buyer keys is not one to publish |
 | 2026-09-10 | The demo page's waits, and the seller's form (`public/`) | Traced a morning of failing Hedera calls to a system clock an hour behind real time, then fixed three things the page did badly once it worked again: nothing marked a wait, the four-second poll rebuilt the seller's half-made form from scratch, and the threshold list ignored which service was selected. Checked the result by loading the real `public/app.js` in a throwaway stubbed DOM and asserting the behaviour, rather than by watching the page | Reported the symptom precisely enough to be diagnosable - the error text, its ten-second cadence, and that it was new that morning. Chose how strong the wait treatment should be, and required it to cover actions and wallet switches rather than only the cold start |
 | 2026-09-10 | Reading the demo page, and a fourth buyer (`public/`, `src/server/pools.ts`, `scripts/`) | Diagnosed three unrelated pool ids on one screen by querying the live subgraph for every pool the contract holds, rather than by reading the code - which is what found it, because `sellingPoolFor`'s fallback to the *earliest* matching pool reads as a defensible choice in isolation and only the real data shows it naming a pool released weeks earlier. Then moved seat occupancy onto the card that names the pool, gave the page a product identity, and checked the result by screenshotting the running page in headless Chrome at the video's 720p floor instead of reasoning about the CSS - which is how the sliced log line was found. Wrongly asserted in the plan that the new pool count was free, then found `scan` re-reads `poolCount` on every call and folded both answers into one registry method rather than pay twice | Reported that the page's pool numbering was unreadable, precisely enough to be checkable - which of the three ids appeared where. Chose to fix the crowd strip by deleting it and moving its meaning onto the pool card, over the alternative of a per-buyer subgraph query that would have made its dots true; held the line that the left column must not become a pool picker, since nothing in the `quorum` exchange carries a pool id, and required the page to disclose what it filters instead |
+| 2026-09-10 | Review of the whole branch, and two fixes from it (`public/app.js`) | Reviewed the 25-commit branch in one pass against the specs, then verified both blocking findings against the tree before acting on either - the reports' anchors have been wrong before. Rebuilt the stubbed-DOM check the earlier session threw away, and confirmed each fix by reverting *it alone* and watching its own assertion fail | Asked for the review and chose its scope: both blocking findings and the three stale comments, over the larger option of committing the harness as a suite. Declined nothing on grounds of taste - the cut was time before a freeze, and it is named as that |
 
 ## 4. What was done without AI
 
@@ -652,3 +653,47 @@ presented in the same register as a dead-code removal.** Four of the fourteen fi
 were skipped for exactly that reason and are written down in the pull request rather than
 silently dropped. The reviews were worth running — three of them converged on the export nobody
 used — but none of the fourteen was safe to apply on the strength of the report alone.
+
+---
+
+### The branch reviewed as a whole, 2026-09-10
+
+The branch was reviewed once more before merging, by a single agent given the diff, the specs and
+the constraints — not the conversation — and told where the seats had already been spent: the
+first seventeen commits had had a Copilot pass, and the five findings the pull request had
+declined were handed over with the reasoning, so the pass would not spend itself re-arguing them.
+It returned no Critical findings, two Important, and eight Minor.
+
+Both Important findings were **interactions between commits that were each correct alone**, which
+is the class a per-commit review cannot see. The in-flight guard added in `77405aa` and the wallet
+switch's `waitFor(refresh)` added in `fdacc1e` never appeared in the same diff. Together they
+dropped a refresh the *user* had asked for, and the page then rendered one buyer's name and
+balance above another buyer's seat cards with live buttons on rows that were not theirs. The
+second was subtler: caching the seller's form fixed the reported symptom completely — selections
+do survive — while leaving `replaceChildren` to detach and re-attach the cached node every four
+seconds, which drops focus and closes an open dropdown. The bug reported was fixed; a bug nobody
+had reported, with the same appearance on camera, was not.
+
+Three of the Minor findings were sentences this branch had made false: a comment saying
+`sellingPoolFor` returns "not the newest pool" two commits after it started doing exactly that, a
+README naming a seat bar that had become dots, and a constant documented as what the page shows
+when it is what the page holds. §5 has been recording that fault since the contract review. It is
+worth noting that all three were *introduced by the fixes on this branch* rather than surviving
+from earlier work — the edit that changes behaviour and the sentence describing it are the same
+commit's responsibility, and three times here they parted company inside it.
+
+**What made this round different from the four that preceded it.** The line numbers were accurate
+and every finding survived checking, which is the opposite of the September 9 experience. The
+plausible reason is scope: one agent over a whole branch with the declined findings in hand, rather
+than four agents over one diff each with an instruction to find a category of problem. An agent
+told to find duplication will return duplication whether or not any is worth acting on; an agent
+asked whether a branch is ready to merge can answer that it nearly is.
+
+**The harness that was thrown away, and thrown away again.** The reviewer's third Important
+finding was that `public/app.js` carries the page's entire concurrency model and none of it is
+reachable by `npm test` — and that the stubbed-DOM harness written on 2026-09-09 would have caught
+both of the findings above, had it been kept. It was rebuilt to verify these two fixes: each was
+reverted on its own and its own assertion was confirmed to fail, which is how the form was found
+to be detached exactly twice by two polls. Then it was thrown away a second time, deliberately, as
+a call about the hours left rather than about its value. It is the one recommendation from this
+review that was understood, agreed with, and not acted on.
