@@ -1,0 +1,35 @@
+# What never reaches the build context.
+#
+# The first block is not about image size. A file copied into an image stays in that image's
+# layers whoever deletes it later, and these hold private keys - the same keys .gitignore
+# keeps out of a public repo. An image is published too.
+.env
+.env.*
+!.env.example
+.accounts.json
+*.accounts.json
+*.key
+*.pem
+secrets.json
+subgraph/.certs/
+
+# Rebuilt inside the image by `npm run build`. A host copy would be whatever this laptop last
+# compiled, which is not necessarily this commit.
+artifacts/
+cache/
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Not the coordinator's business. The subgraph is three other Fly apps built from stock
+# images, and `subgraph/fly/` deploys them.
+subgraph/
+test/
+.git/
+.github/
+.claude/
+.vscode/
+.idea/
+*.log
