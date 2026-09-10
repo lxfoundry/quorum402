@@ -4,6 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>quorum402</title>
+    <!-- The mark again, so the tab carries it and nothing asks for a /favicon.ico that is not there. -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><circle cx='20' cy='20' r='14' fill='none' stroke='%231d3f8f' stroke-opacity='.4' stroke-width='3'/><circle cx='20' cy='6' r='5.5' fill='%231d3f8f'/><circle cx='34' cy='20' r='5.5' fill='%231d3f8f'/><circle cx='20' cy='34' r='5.5' fill='%231d3f8f'/><circle cx='6' cy='20' r='5.5' fill='%231d3f8f'/></svg>" />
     <style>
       /*
        * Built to be filmed. The delivery floor for the submission video is 720p, so nothing here
@@ -15,8 +17,28 @@
         --ink: #16181d;
         --muted: #5c6370;
         --line: #d8dbe2;
+
+        /*
+         * Three surfaces, not one. Every region used to sit on the same grey behind the same
+         * hairline border, so the page read as a single sheet with lines drawn on it and the
+         * eye had nothing to group by. Depth does that work: the ground is darkest, a column
+         * tray sits on it, and a card sits on the tray. Each step is small - this is a working
+         * screen, not a poster - but three of them stack into a visible hierarchy at 720p.
+         */
+        --ground: #e4e7ee;
+        --tray: #eef0f4;
         --panel: #ffffff;
-        --ground: #f4f5f7;
+
+        /*
+         * The product's own colour, distinct from the interactive one. The band identifies
+         * quorum402; `--accent` says what can be clicked. Keeping them apart is what stops a
+         * brand from swallowing the affordances - a header in button-blue makes the whole page
+         * look pressable.
+         */
+        --brand: #1d3f8f;
+        --brand-deep: #14295c;
+        --on-brand: #ffffff;
+
         --open: #1857c4;
         --met: #12784a;
         --expired: #a2610a;
@@ -40,16 +62,37 @@
 
       header {
         display: flex;
-        align-items: flex-start;
+        align-items: center;
         justify-content: space-between;
         gap: 24px;
         padding: 14px 22px;
-        background: var(--panel);
-        border-bottom: 1px solid var(--line);
+        background: linear-gradient(100deg, var(--brand-deep), var(--brand));
+        color: var(--on-brand);
       }
+
+      /* The product: mark, wordmark, and what it does, as one block. */
+      .product { display: flex; align-items: center; gap: 14px; }
+      .mark { flex: none; width: 40px; height: 40px; }
       .brand { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
-      .pitch { color: var(--muted); max-width: 62ch; margin-top: 2px; }
-      .wallet-pick { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+      .pitch { color: rgba(255, 255, 255, 0.8); max-width: 62ch; margin-top: 2px; }
+
+      /*
+       * The wallet is not part of the product. It is who you are pretending to be, which is a
+       * control over the demo rather than a feature of quorum402 - so it sits *on* the band as
+       * its own light panel rather than in it, and reads as a thing you operate.
+       */
+      .wallet-pick {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        white-space: nowrap;
+        background: var(--panel);
+        color: var(--ink);
+        border-radius: 8px;
+        padding: 9px 13px;
+        box-shadow: 0 1px 3px rgba(10, 20, 45, 0.28);
+      }
+      .wallet-pick label { margin: 0; }
       .wallet-pick select { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
       .balance { font-variant-numeric: tabular-nums; font-weight: 600; transition: opacity 0.15s ease; }
       .account { color: var(--muted); font-size: 14px; }
@@ -63,21 +106,42 @@
         padding: 16px 22px;
         overflow: hidden;
       }
-      section { display: flex; flex-direction: column; min-height: 0; }
+      /* A tray, so the column has an edge rather than a hairline. Cards sit on it, in white. */
+      section {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        background: var(--tray);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        overflow: hidden;
+      }
       h2 {
+        display: flex;
+        align-items: center;
+        gap: 9px;
         font-size: 13px;
         text-transform: uppercase;
         letter-spacing: 0.08em;
         color: var(--muted);
-        margin: 0 0 10px;
+        margin: 0;
+        padding: 11px 14px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
       }
-      .scroll { overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 4px; }
+      /* A colour key per column: what is on offer, and what is already yours. Two columns of
+         identical cards are otherwise told apart only by reading their headings. */
+      h2::before { content: ""; width: 3px; height: 14px; border-radius: 2px; background: currentColor; }
+      #col-services h2::before { background: var(--brand); }
+      #col-mine h2::before { background: var(--met); }
+      .scroll { overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 12px; }
 
       .card {
         background: var(--panel);
         border: 1px solid var(--line);
         border-radius: 8px;
         padding: 14px 16px;
+        box-shadow: 0 1px 2px rgba(22, 24, 29, 0.05);
         transition: opacity 0.15s ease;
       }
       .card h3 { margin: 0 0 2px; font-size: 17px; }
@@ -168,12 +232,23 @@
 
       /* ---------------------------------------------------------------- footer */
 
-      footer { border-top: 1px solid var(--line); background: var(--panel); }
+      /* The log's breathing room lives here, not on the scroller - see below. */
+      footer { border-top: 1px solid var(--line); background: var(--panel); padding: 8px 0; }
 
+      /*
+       * Exactly five lines tall, and no vertical padding of its own.
+       *
+       * The log is pinned to its own bottom on every render, so whatever does not fit is sliced
+       * along the top edge rather than scrolled away - and a sliced line of a protocol trace
+       * reads as a rendering fault in the one panel whose whole job is to be believed. A height
+       * that is a whole number of lines is only half of avoiding that: padding-top sits *inside*
+       * the scroller, so it offsets every line by 8px and puts the slice back. The footer holds
+       * that space instead.
+       */
       .log {
-        height: 104px;
+        height: calc(5 * 1.5 * 14px);
         overflow-y: auto;
-        padding: 8px 22px;
+        padding: 0 22px;
         font-family: Consolas, "SF Mono", monospace;
         font-size: 14px;
         line-height: 1.5;
@@ -189,15 +264,29 @@
   </head>
   <body class="busy">
     <header>
-      <div>
-        <div class="brand">quorum402</div>
-        <div class="pitch">
-          One HTTP 402, answered by a crowd. Payment is held and the data unlocks only if enough
-          separate buyers pay before the deadline — otherwise everyone is refunded.
+      <div class="product">
+        <!--
+          Four dots on a ring: the quorum. The same shape as the seat dots on every pool card,
+          because the mark and the mechanic are one idea - a resource that opens when enough
+          separate people stand around it. `currentColor`, so it inherits the band's white.
+        -->
+        <svg class="mark" viewBox="0 0 40 40" aria-hidden="true">
+          <circle cx="20" cy="20" r="14" fill="none" stroke="currentColor" stroke-opacity=".38" stroke-width="2" />
+          <circle cx="20" cy="6" r="5" fill="currentColor" />
+          <circle cx="34" cy="20" r="5" fill="currentColor" />
+          <circle cx="20" cy="34" r="5" fill="currentColor" />
+          <circle cx="6" cy="20" r="5" fill="currentColor" />
+        </svg>
+        <div>
+          <div class="brand">quorum402</div>
+          <div class="pitch">
+            One HTTP 402, answered by a crowd. Payment is held and the data unlocks only if enough
+            separate buyers pay before the deadline — otherwise everyone is refunded.
+          </div>
         </div>
       </div>
       <div class="wallet-pick">
-        <label for="wallet" style="margin: 0">wallet</label>
+        <label for="wallet">wallet</label>
         <select id="wallet"></select>
         <div>
           <div class="balance" id="balance">—</div>
@@ -207,13 +296,13 @@
     </header>
 
     <main>
-      <section>
+      <section id="col-services">
         <h2 id="left-title">Services</h2>
         <div class="scroll" id="services">
           <div class="empty">Reading the chain — the first load takes a few seconds.</div>
         </div>
       </section>
-      <section>
+      <section id="col-mine">
         <h2 id="right-title">My seats</h2>
         <div class="scroll" id="right">
           <div class="empty">Reading the chain — the first load takes a few seconds.</div>
