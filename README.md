@@ -43,7 +43,70 @@ tiered group buying (the price falls as the pool fills), and all-or-nothing crow
 
 ## How it works
 
-TODO — mechanism walkthrough, once the escrow and the payment path are wired.
+A seller opens a pool over a resource. Buyers arrive at that resource one at a time and
+independently, and no buyer knows about the others — the crowd is assembled by the thing being
+sold, not by anyone organising it.
+
+1. **The seller opens a pool**, on-chain, and the coordinator is not told. The pool records the
+   resource URL it sells, the threshold, the seat price, the deadline, the coordinator allowed to
+   record payments into it, and the account the money goes to if it fills
+   ([ADR 0003](specs/adr/0003-pool-authority-model.md)). The server learns the pool exists by
+   reading the chain, the same way anyone else would: it keeps no database, so what is for sale is
+   whatever the chain currently says is for sale.
+2. **A buyer `GET`s the resource** and is answered `402 Payment Required`. The `PAYMENT-REQUIRED`
+   header carries two offers — `quorum`, declaring `paymentFlow: conditional`, the threshold, how
+   many seats are already taken and the deadline; then plain `exact`, so a client that has never
+   heard of this scheme can still pay.
+3. **The buyer pays the contract, not the seller.** `payTo` is the pool contract's own Hedera id,
+   so the money lands in the contract's account and nobody holds it on the way. The payment is a
+   native `CryptoTransfer`, which runs no contract code — the contract therefore cannot refuse it
+   and cannot fail on receipt
+   ([ADR 0004](specs/adr/0004-deposits-that-cannot-be-refused.md)). The facilitator verifies the
+   payload, pays the gas and submits it.
+4. **The coordinator records the deposit** in a second transaction, crediting one seat to the
+   payer's address — [`QuorumPools.sol:226`](contracts/QuorumPools.sol#L226). One seat per address,
+   so a payer cannot fake a crowd by paying twice. Because the money moves before the contract
+   hears about it, attribution is a trust boundary rather than an arithmetic problem, and
+   [ADR 0002](specs/adr/0002-payment-attribution-on-hedera.md) is where that cost is accounted
+   for. The server checks that this step *can* succeed before it settles anything, because a
+   refusal before `/settle` costs the payer nothing and a refusal after it costs them the payment
+   ([ADR 0006](specs/adr/0006-nothing-settles-until-recording-can-succeed.md)).
+5. **The buyer is told which of the two things just happened.** Threshold not yet met: `202
+   Accepted`, with a receipt naming the seat, the fill and the deadline. Threshold met by *this*
+   payment: `200`, with the resource. Every other outcome is in
+   [§6](specs/quorum-scheme.md#6-lifecycle).
+6. **If the deadline passes with the pool short, everyone is refunded** — and not by the
+   coordinator, which is the point. A payer who can afford the gas calls
+   [`claimRefund`](contracts/QuorumPools.sol#L336) with their own key and needs nobody; a payer who
+   cannot has [`refundAll`](contracts/QuorumPools.sol#L381) push it to them, called by a bystander
+   who gains nothing by doing it. [§9](specs/quorum-scheme.md#9-reversal) puts reversal outside
+   HTTP deliberately: the party a payer most needs protection from is the one that failed to sell
+   them the thing.
+
+Four properties of that sequence are load-bearing, and each is somewhere a simpler design would
+have gone wrong.
+
+**The `202` is a row x402 does not have.** Its existing flows either deliver or fail, because one
+payer settling one request has no third outcome. A payment that succeeded while the resource stays
+pending is that third outcome, and it is why `quorum` proposes a payment flow
+([`conditional`](specs/quorum-scheme.md#2-the-conditional-payment-flow)) as well as a scheme.
+
+**Delivery never waits on the seller being paid.** `release` is
+[external and permissionless](contracts/QuorumPools.sol#L300) — anyone can call it, and the
+coordinator never does. Coupling a buyer's access to a payout would let a failed transfer withhold
+a resource the crowd has already earned.
+
+**Redeeming a seat has to go through the index.** The transaction id a payment settled under is
+emitted in a log and never stored in contract state, so proving "this settlement is my seat" means
+resolving it through the subgraph — which puts the index in the request path rather than beside it
+([§8](specs/quorum-scheme.md#8-entitlement-and-redemption)). A seat belongs to the payer, not to
+whoever holds the receipt: presenting someone else's settlement is refused `403`.
+
+**The threshold is not a discount.** For the resource sold here — a contributory price benchmark —
+the count of *distinct* payers is a privacy floor: at one contributor the answer is the buyer's own
+data handed back, and at two, knowing the mean and your own leaves the other's exactly. That is why
+the contract counts addresses rather than payments, and why "enough buyers" is a correctness
+condition instead of a pricing tactic ([`src/benchmark/catalogue.ts`](src/benchmark/catalogue.ts)).
 
 ## The `quorum` scheme
 
