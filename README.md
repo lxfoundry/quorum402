@@ -47,6 +47,57 @@ A seller opens a pool over a resource. Buyers arrive at that resource one at a t
 independently, and no buyer knows about the others — the crowd is assembled by the thing being
 sold, not by anyone organising it.
 
+The whole exchange, before the detail — the six steps below are the six labelled here. The
+protocol-level diagrams, with every refusal and the order it runs in, are
+[§6.2](specs/quorum-scheme.md#62-the-payment-leg-as-built) and
+[§8.1](specs/quorum-scheme.md#81-redemption-as-built); this is the shape they fill in.
+
+```mermaid
+sequenceDiagram
+    actor S as Seller
+    actor B as Buyer
+    participant RS as Coordinator<br/>resource server
+    participant F as Facilitator
+    participant P as Pool contract<br/>on Hedera
+    participant G as Subgraph
+
+    Note over S,G: 1 · the seller opens a pool. The coordinator is never told
+    S->>P: openPool — resource URL, threshold, seat price,<br/>deadline, coordinator, recipient
+    P-->>G: PoolCreated
+
+    Note over B,RS: 2 · a buyer asks for the resource
+    B->>RS: GET /benchmark/agent-spend-eu
+    RS->>P: which pool names this URL, and can it still take a payment?
+    RS-->>B: 402 + PAYMENT-REQUIRED<br/>quorum with paymentFlow conditional, then exact
+
+    Note over B,P: 3 · the buyer pays the contract, not the seller
+    B->>RS: GET /benchmark/agent-spend-eu + PAYMENT-SIGNATURE
+    RS->>RS: ADR 0006 preflight — every refusal happens here,<br/>while the payer still has their money
+    RS->>F: POST /verify, then POST /settle
+    F->>P: CryptoTransfer — HBAR credited, no contract code runs
+
+    Note over RS,G: 4 · the coordinator writes down whose payment it was
+    RS->>P: recordDeposit — poolId, payer, tinybars, hederaTxId
+    P-->>G: DepositRecorded — one seat per address
+
+    Note over B,RS: 5 · the buyer is told which of two things happened
+    alt crowd still short
+        RS-->>B: 202 Accepted + receipt
+    else this payment completed the crowd
+        RS-->>B: 200 + the resource
+    end
+
+    Note over B,G: 6 · what a 202 is worth afterwards
+    B->>RS: GET /benchmark/agent-spend-eu + QUORUM-RECEIPT
+    RS->>G: which deposit did this settlement become?
+    RS->>P: is that deposit counted, and does it belong to this payer?
+    RS-->>B: 200 + the resource
+
+    Note over S,G: or the deadline passes short, and nobody keeps anything
+    B->>P: claimRefund — the payer's own key, no coordinator involved
+    S->>P: release — pays the seller, and anyone may call it
+```
+
 1. **The seller opens a pool**, on-chain, and the coordinator is not told. The pool records the
    resource URL it sells, the threshold, the seat price, the deadline, the coordinator allowed to
    record payments into it, and the account the money goes to if it fills
