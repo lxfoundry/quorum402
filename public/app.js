@@ -239,12 +239,16 @@ function seatPanels() {
   // Why the list can look short. These are this address's real deposits into pools that name
   // another coordinator - an `npm run e2e` run on an ephemeral port, almost always - and this
   // one cannot redeem them. Better said than silently filtered.
+  //
+  // Deposits rather than seats, because a refunded one gave its seat back and a late one never
+  // took a seat at all - and `at least` when the index query hit its bound, since the number is
+  // then a floor rather than a total. A note explaining a gap has to be exact about its own.
   if (state.seatsElsewhere) {
     panels.push(
       el(
         "div",
         "empty",
-        `${state.seatsElsewhere} more seat(s) bought against a different coordinator are not shown — this one cannot redeem them.`,
+        `${state.seatsCapped ? "At least " : ""}${state.seatsElsewhere} more deposit(s) from this address are in pools another coordinator serves — this one cannot redeem them.`,
       ),
     );
   }

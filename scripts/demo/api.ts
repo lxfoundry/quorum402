@@ -160,7 +160,7 @@ async function stateFor(
   const [services, held] = await Promise.all([servicesFor(ctx, pools, now), balances.all()]);
   const mySeats = mine
     ? await seatsFor(ctx, pools, mine.evmAddress, mine.label, now)
-    : { seats: [], elsewhere: 0 };
+    : { seats: [], elsewhere: 0, capped: false };
 
   return {
     network: deps.network,
@@ -178,6 +178,7 @@ async function stateFor(
     services,
     seats: mySeats.seats.map((seat) => withLinks(deps.network, seat)),
     seatsElsewhere: mySeats.elsewhere,
+    seatsCapped: mySeats.capped,
     log: ctx.log.tail(),
   };
 }
@@ -243,6 +244,21 @@ function poolCard(availability: PoolAvailability, now: number) {
 }
 
 /**
+ * How many of this address's deposits the seat list asks the index for, newest first.
+ *
+ * Not a display bound - everything this coordinator sells is rendered. It bounds the *query*,
+ * and `depositsFor`'s default of 25 was low enough to bite silently: a machine that has run
+ * `npm run e2e` a few dozen times holds that many deposits against ephemeral-port coordinators
+ * on its own, and once those fill the window an older seat in a pool this coordinator *does*
+ * sell falls out of it and stops being rendered at all. The count below would then explain a
+ * gap it was itself creating.
+ *
+ * A hundred puts that out of reach for a demo and is still one query. `capped` reports the case
+ * anyway: a bound that is only usually enough is the kind that is wrong on the day.
+ */
+const DEPOSIT_LOOKBACK = 100;
+
+/**
  * A payer's own seats: which pools they are in, and what each one now permits.
  *
  * The index is asked once for the whole list. Then the chain is asked about only the pools that
@@ -255,6 +271,10 @@ function poolCard(availability: PoolAvailability, now: number) {
  * because this coordinator would answer 401 for them and a Redeem button beside one would lie.
  * Saying how many there are is the difference between a filtered list and a list that looks
  * suspiciously short.
+ *
+ * Deposits, not seats, and the page says so: a refunded deposit gave its seat back, and one that
+ * arrived after the pool filled never took one. Counting them as seats would overstate a number
+ * whose whole job is to account for a gap.
  */
 async function seatsFor(
   ctx: DemoContext,
@@ -262,7 +282,7 @@ async function seatsFor(
   evmAddress: string,
   label: string,
   now: number,
-): Promise<{ seats: SeatRow[]; elsewhere: number }> {
+): Promise<{ seats: SeatRow[]; elsewhere: number; capped: boolean }> {
   const { cfg } = ctx.coordinator;
   const sells = new Map(
     BENCHMARKS.map((b) => [resourceUrlFor(cfg.publicBaseUrl, b.slug), b.slug] as const),
@@ -273,7 +293,7 @@ async function seatsFor(
   const index = ctx.coordinator.index;
   if (index) {
     try {
-      indexed = (await index.depositsFor(evmAddress)).deposits;
+      indexed = (await index.depositsFor(evmAddress, DEPOSIT_LOOKBACK)).deposits;
     } catch (error) {
       // The index being down must not blank the screen: what this process watched happen is
       // still true, and a payer mid-demo would rather see their seat un-redeemable than gone.
@@ -288,7 +308,11 @@ async function seatsFor(
   // pool names this coordinator by construction.
   const elsewhere = indexed.filter((d) => !sells.has(d.pool.resourceUrl)).length;
   const live = await cache.livePools(relevant);
-  return { seats: mergeSeats({ indexed, remembered, sells, live, now }), elsewhere };
+  return {
+    seats: mergeSeats({ indexed, remembered, sells, live, now }),
+    elsewhere,
+    capped: indexed.length >= DEPOSIT_LOOKBACK,
+  };
 }
 
 /** Explorer links, added last so nothing above has to carry a network around. */
