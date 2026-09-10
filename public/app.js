@@ -22,7 +22,16 @@ let wallet = localStorage.getItem("quorum402.wallet") || "";
  * action's wait, and the page must stay blocked across both.
  */
 let waits = 0;
-let polling = false;
+/**
+ * Reads in flight, and the sequence number of the newest one issued.
+ *
+ * The background poll skips while anything is in flight - a poll that overtakes a slow one costs
+ * the server the whole read set twice over, exactly when it is already behind. A refresh the
+ * *user* asked for is never skipped: it is the thing they are waiting on. `latest` is what makes
+ * that safe - an answer overtaken while in flight is discarded rather than rendered.
+ */
+let inFlight = 0;
+let latest = 0;
 /** The licence a redemption returned, kept per pool so it survives the next poll. */
 const licences = new Map();
 
@@ -46,24 +55,28 @@ async function post(path, payload) {
 }
 
 async function refresh() {
-  // One request at a time. A poll that overtakes a slow one costs the server the whole read set
-  // twice over, exactly when it is already behind - and the answers could land out of order.
-  if (polling) return;
-  polling = true;
+  inFlight += 1;
+  const mine = ++latest;
   try {
-    // Bounded, because `polling` is only cleared in `finally`: a request that never settles -
-    // a stalled mirror-node connection rather than a refused one - would leave the guard set
-    // and the page would stop updating until it was reloaded. Only this poll takes a deadline.
-    // The action POSTs sign and settle real transactions, and are allowed to take as long as
-    // they take.
-    state = await api(`state${wallet ? `?wallet=${encodeURIComponent(wallet)}` : ""}`, {
+    // Bounded, because `inFlight` only falls in `finally`: a request that never settles - a
+    // stalled mirror-node connection rather than a refused one - would leave the count above
+    // zero and the page would stop polling until it was reloaded. Only this read takes a
+    // deadline. The action POSTs sign and settle real transactions, and are allowed to take as
+    // long as they take.
+    const answer = await api(`state${wallet ? `?wallet=${encodeURIComponent(wallet)}` : ""}`, {
       signal: AbortSignal.timeout(POLL_MS * 3),
     });
+    // Overtaken while in flight, so this describes a moment already redrawn - or, after a wallet
+    // switch, a wallet the user has left. `render` reads the *current* wallet for the name and
+    // balance but takes the seats from `state`, so rendering it would put one buyer's name above
+    // another buyer's seat cards, with live buttons on rows that are not theirs.
+    if (mine !== latest) return;
+    state = answer;
     render();
   } catch (error) {
     console.error(error);
   } finally {
-    polling = false;
+    inFlight -= 1;
   }
 }
 
@@ -520,6 +533,8 @@ $("wallet").onchange = (event) => {
 waitFor(refresh);
 setInterval(() => {
   // Never poll over a wait: a refresh mid-payment would redraw the button being clicked, and one
-  // mid-switch would flick the screen back to the wallet being left.
-  if (!waits) refresh();
+  // mid-switch would flick the screen back to the wallet being left. Never over another read
+  // either - that guard used to live inside `refresh`, where it also swallowed the refreshes the
+  // user asked for and left the screen a wallet behind.
+  if (!waits && !inFlight) refresh();
 }, POLL_MS);
