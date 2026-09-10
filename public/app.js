@@ -546,10 +546,16 @@ function countdown(pool) {
   const node = el("span", "mono");
   const at = Date.now() + pool.secondsLeft * 1000;
   const tick = () => {
-    if (!node.isConnected) return;
     const left = Math.max(0, Math.round((at - Date.now()) / 1000));
     node.textContent = left > 0 ? `closes in ${clock(left)}` : "deadline passed";
-    if (left > 0) setTimeout(tick, 1000);
+    // Keep ticking only while this node is still on the page: every poll rebuilds these cards,
+    // so a countdown that ticked on regardless would leave one live timer per card per poll,
+    // for the length of the demo.
+    //
+    // Checked on the *next* tick rather than this one. The first runs inside `countdown`, before
+    // the caller has appended the node anywhere - `isConnected` is false for every countdown at
+    // that moment, so guarding the first tick meant none of them ever painted or scheduled.
+    if (left > 0) setTimeout(() => { if (node.isConnected) tick(); }, 1000);
   };
   tick();
   return node;
