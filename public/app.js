@@ -320,11 +320,32 @@ function buildSellForm() {
   card.append(el("div", "why", "Four choices, one click. Nothing about opening a pool goes through the coordinator — it finds out by reading the chain, like anyone else."));
 
   const service = dropdown("Service", state.services.map((s) => [s.slug, title(s.slug)]));
-  const first = state.services[0];
-  const threshold = dropdown("Threshold", first.thresholds.map((t) => [t, `${t} distinct buyers`]));
+  const threshold = dropdown("Threshold", []);
   const price = dropdown("Seat price", state.choices.seatHbar.map((c) => [c.hbar, c.label]));
   const ttl = dropdown("Deadline", state.choices.ttl.map((c) => [c.seconds, c.label]));
   card.append(service.wrap, threshold.wrap, price.wrap, ttl.wrap);
+
+  /**
+   * The thresholds on offer are the *selected* service's, not the first service's.
+   *
+   * `minimumContributors` is declared per benchmark and is the floor the server refuses below -
+   * published to fewer buyers than that, an aggregate discloses a contributor - so a form
+   * offering another benchmark's floor can offer a threshold this one will not accept.
+   *
+   * Re-read on change rather than fixed when the form is built, because the form now outlives
+   * the choice that built it. A threshold the newly chosen service also offers survives the
+   * swap; one it does not falls back to that service's own floor.
+   */
+  const syncThresholds = () => {
+    const chosen = state.services.find((s) => s.slug === service.select.value);
+    const was = threshold.select.value;
+    threshold.select.replaceChildren(
+      ...chosen.thresholds.map((t) => new Option(`${t} distinct buyers`, t)),
+    );
+    if (chosen.thresholds.some((t) => String(t) === was)) threshold.select.value = was;
+  };
+  service.select.onchange = syncThresholds;
+  syncThresholds();
 
   const button = el("button", null, "Open pool");
   button.onclick = () =>
