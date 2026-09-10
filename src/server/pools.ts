@@ -86,7 +86,12 @@ export class PoolRegistry {
    */
   async poolsFor(resourceUrl: string): Promise<bigint[]> {
     await this.scan();
-    return this.byUrl.get(resourceUrl) ?? [];
+    // A copy. The array behind it is the registry's own index and it is appended to by every
+    // later scan, so handing out the reference lets a caller edit what the next lookup returns
+    // and makes two calls that "both returned [0, 1]" the same object asserted twice. Nothing
+    // mutates it today, which is the whole reason to close it now rather than after something
+    // does.
+    return [...(this.byUrl.get(resourceUrl) ?? [])];
   }
 
   /**
@@ -166,6 +171,12 @@ export class PoolRegistry {
    * push every new pool id into `byUrl` twice. Nothing would resolve to the wrong pool, but
    * every later lookup would walk the duplicates and pay for a contract read per copy, for
    * the life of the process.
+   *
+   * The cost of joining rather than starting: a caller that arrives mid-scan gets the pool
+   * count read when that scan began, so a pool created between the two is invisible until the
+   * next lookup. That is the right trade at a four-second poll - one extra poll of staleness
+   * against a permanent duplicate read - and it is bounded, because the next scan starts from
+   * `scanned` and finds it.
    */
   private async scan(): Promise<void> {
     this.scanning ??= this.readForward().finally(() => {

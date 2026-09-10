@@ -71,6 +71,19 @@ describe("pool registry", () => {
     assert.deepEqual(reads, [0n, 1n]);
     assert.deepEqual(first, [0n, 1n]);
     assert.deepEqual(second, [0n, 1n]);
+    // Otherwise the two assertions above are one assertion made twice, against a single array
+    // both callers were handed.
+    assert.notEqual(first, second, "each caller gets its own array");
+  });
+
+  it("hands back a copy, so a caller cannot edit what the next lookup returns", async () => {
+    const { registry } = registryOver([terms(0n), terms(1n)]);
+
+    const mine = await registry.poolsFor(RESOURCE);
+    mine.push(99n);
+    mine.reverse();
+
+    assert.deepEqual(await registry.poolsFor(RESOURCE), [0n, 1n]);
   });
 
   it("resolves a resource URL to the pool that named it", async () => {
