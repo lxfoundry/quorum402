@@ -124,6 +124,23 @@ credited to the tinybar. It needs a funded testnet operator and the buyer accoun
 
 Both are live, and both answer without a wallet or a clone.
 
+Whether the coordinator can currently *settle* is a separate question from whether it is running,
+and it has its own endpoint:
+
+```bash
+curl -si https://quorum402-coordinator.fly.dev/readyz
+```
+
+`200` with `canSettle: true` means payments will be taken. `503` with `coordinator-underfunded`
+means they will not: the coordinator pays for `recordDeposit` out of its own account, and
+[`preflight`](src/server/preflight.ts) refuses every settlement below a 5 ℏ floor rather than take
+money it cannot attribute. That is the right refusal and it used to be an invisible one — a 402 is
+built from chain reads that never ask whether this server can act on the offer, so an underfunded
+coordinator advertises real pools on real terms and turns buyers away at the last step.
+`/healthz` cannot answer this and deliberately does not try: it reads nothing external, because it
+is what the platform health check watches and an unreachable mirror node is no reason to replace
+the machine.
+
 ### The 402 itself
 
 ```bash

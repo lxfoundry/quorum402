@@ -49,7 +49,7 @@ import { inspectBindingTransfer } from "./payer.js";
 import { bindingRequestFor, validateQuorumPayload } from "./payment.js";
 import { PoolRegistry } from "./pools.js";
 import type { PoolAvailability } from "./pools.js";
-import { preflight } from "./preflight.js";
+import { MIN_COORDINATOR_TINYBARS, preflight } from "./preflight.js";
 import type { SolvencyReader } from "./preflight.js";
 import { buildReceipt } from "./receipt.js";
 import { expiredProof, redeem, statusFor, unreadable } from "./redeem.js";
@@ -94,6 +94,56 @@ export function createApp(deps: ServerDeps): Express {
 
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true, network: deps.network, contract: deps.contractId });
+  });
+
+  /**
+   * Whether this coordinator can currently do the thing it exists to do.
+   *
+   * Separate from `/healthz`, and the split is the whole reason this exists. `/healthz` answers
+   * from configuration and touches no network, deliberately: it is what Fly's check reads, and a
+   * machine should not be replaced because the mirror node is having a bad afternoon (`fly.toml`
+   * says so at the check). That also makes it structurally unable to report the one failure that
+   * stops this server working - `preflight` refuses *every* settlement once the coordinator's own
+   * account falls below `MIN_COORDINATOR_TINYBARS`, and nothing anywhere said so.
+   *
+   * It went unnoticed for a day on 2026-09-10 because both halves look right. A 402 is built from
+   * chain reads that never ask whether this server can act on the offer, so an underfunded
+   * coordinator advertises real pools on real terms and refuses at the moment a buyer pays - who
+   * reads the refusal as the pool being closed rather than as the seller being broke.
+   *
+   * **Nothing routes on this endpoint.** No health check reads it, so a 503 here replaces no
+   * machine and drops no request; it is a question a person or a monitor can ask, and the answer
+   * is about this account rather than about this process.
+   */
+  app.get("/readyz", async (_req, res) => {
+    const floor = MIN_COORDINATOR_TINYBARS;
+    let balance: bigint;
+    try {
+      balance = await deps.coordinatorBalanceTinybars();
+    } catch {
+      // Unreadable is not underfunded, and the difference is the reader's next move: one is
+      // answered by a faucet and the other by waiting. Both are reported not-ready, because a
+      // coordinator that cannot see its own balance cannot promise to settle either.
+      res.status(503).json({
+        ok: false,
+        canSettle: false,
+        reason: "balance-unreadable",
+        coordinator: deps.coordinatorAccountId,
+        floorTinybars: floor.toString(),
+      });
+      return;
+    }
+    const canSettle = balance >= floor;
+    // `coordinator-underfunded` is the same string `preflight` refuses a payment with, so the
+    // reason a buyer was turned away and the reason this endpoint gives are one grep apart.
+    res.status(canSettle ? 200 : 503).json({
+      ok: canSettle,
+      canSettle,
+      ...(canSettle ? {} : { reason: "coordinator-underfunded" }),
+      coordinator: deps.coordinatorAccountId,
+      balanceTinybars: balance.toString(),
+      floorTinybars: floor.toString(),
+    });
   });
 
   /** What is on offer, so a reader can find a resource without reading the source. */
