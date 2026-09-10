@@ -56,6 +56,7 @@ was rejected.
 | 2026-09-10 | The demo page's waits, and the seller's form (`public/`) | Traced a morning of failing Hedera calls to a system clock an hour behind real time, then fixed three things the page did badly once it worked again: nothing marked a wait, the four-second poll rebuilt the seller's half-made form from scratch, and the threshold list ignored which service was selected. Checked the result by loading the real `public/app.js` in a throwaway stubbed DOM and asserting the behaviour, rather than by watching the page | Reported the symptom precisely enough to be diagnosable - the error text, its ten-second cadence, and that it was new that morning. Chose how strong the wait treatment should be, and required it to cover actions and wallet switches rather than only the cold start |
 | 2026-09-10 | Reading the demo page, and a fourth buyer (`public/`, `src/server/pools.ts`, `scripts/`) | Diagnosed three unrelated pool ids on one screen by querying the live subgraph for every pool the contract holds, rather than by reading the code - which is what found it, because `sellingPoolFor`'s fallback to the *earliest* matching pool reads as a defensible choice in isolation and only the real data shows it naming a pool released weeks earlier. Then moved seat occupancy onto the card that names the pool, gave the page a product identity, and checked the result by screenshotting the running page in headless Chrome at the video's 720p floor instead of reasoning about the CSS - which is how the sliced log line was found. Wrongly asserted in the plan that the new pool count was free, then found `scan` re-reads `poolCount` on every call and folded both answers into one registry method rather than pay twice | Reported that the page's pool numbering was unreadable, precisely enough to be checkable - which of the three ids appeared where. Chose to fix the crowd strip by deleting it and moving its meaning onto the pool card, over the alternative of a per-buyer subgraph query that would have made its dots true; held the line that the left column must not become a pool picker, since nothing in the `quorum` exchange carries a pool id, and required the page to disclose what it filters instead |
 | 2026-09-10 | Review of the whole branch, and two fixes from it (`public/app.js`) | Reviewed the 25-commit branch in one pass against the specs, then verified both blocking findings against the tree before acting on either - the reports' anchors have been wrong before. Rebuilt the stubbed-DOM check the earlier session threw away, and confirmed each fix by reverting *it alone* and watching its own assertion fail | Asked for the review and chose its scope, twice: first the two blocking findings and the three stale comments, then - having seen them land - every remaining Minor as well, and finally the test file the reviewer had asked for. Nothing from the review was declined on grounds of taste; the one recommendation not acted on is written into the code that carries it |
+| 2026-09-10 | The README's mechanism and setup sections (`README.md`) | Wrote the six-step walkthrough and the four load-bearing properties under it, each pointing at the code or the ADR that decided it, and the setup path underneath - then ran that path on a **clean clone of `main`** rather than describing it from this tree: `npm ci`, build, 235 tests, lint, typecheck, and the preflight's own error on an unfilled `.env`. Read every script before documenting its arguments, which is what caught an invented `--account` flag in the by-hand sequence, and read `ci.yml` before claiming CI covered the end-to-end runs, which it does not. The one step it could not finish - the network preflight, which needs a funded operator - was left unfinished rather than routed around when the harness's own guard refused to copy a key into the scratch clone, and the section states that boundary instead of implying the whole path was verified | Merged the two open pull requests, and chose the README over the remaining build options on the grounds that Hedera's track asks for setup and architecture and the page had neither. The clean-clone standard is the repository's own, written into `CLAUDE.md` before this README existed - the verification is answering a requirement set in advance, not one chosen to fit what was convenient to run |
 
 ## 4. What was done without AI
 
@@ -413,6 +414,30 @@ can put the wait back, and a blank column is a bad first frame at any duration. 
 an account of the latency that a single `curl` refuted, and the evidence against that account was
 already in the conversation that produced it. Reading a call graph yields an explanation shaped
 exactly like a measurement, which is what makes it easy to skip taking one.
+
+**2026-09-10 - documented a command-line flag that does not exist, in the section whose whole
+purpose is being copied and run.** The by-hand sequence in "Running it" was drafted as
+`npm run buy -- --account buyer1`. The script takes positionals - `npm run buy -- <slug>
+[buyerLabel]` - and would have answered that line with a usage error. It was caught by reading
+`scripts/buy-seat.ts` before the section was spliced in, and the flag came from nowhere: not
+mistranscribed from a terminal, not stale from an earlier interface, invented in the draft because
+it was the shape such a flag usually has.
+
+That is the third defect in three days in the same few blocks of this page, and the first two at
+least had the excuse of having been run somewhere - one was corrupted on its way into the file, the
+other written in GNU spellings on a GNU shell. This one had never been executed at all. What the
+three share is only their location, and that is the finding: a README's code blocks are the one
+part of the page that gets *executed* rather than read, and every safeguard that protects them -
+running the line in a shell, running it out of the file, running it on a second OS - starts by
+assuming the command was real. None of them tests that.
+
+**And the same draft credited CI with work it has never done.** Its closing paragraph said the
+network-dependent steps were "exercised on every commit by `npm run e2e`". CI runs `npm ci`, build,
+lint, typecheck and `npm test`; it holds no keys, spends nothing, and has never run `e2e` - which is
+driven by hand before the merges that claim it. Caught by grepping the workflow before the commit.
+A sentence that attributes your own manual work to automation deserves suspicion on sight: it is a
+claim about a system made from memory of that system, in the one document a judge can refute by
+opening `ci.yml`.
 
 ## 6. Review, and what it caught
 
