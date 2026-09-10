@@ -134,6 +134,46 @@ sequenceDiagram
    HTTP deliberately: the party a payer most needs protection from is the one that failed to sell
    them the thing.
 
+### The same six steps, actually run
+
+Every command below was run against the hosted coordinator
+<https://quorum402-coordinator.fly.dev> on **2026-09-10**, and every output is what came back —
+nothing here is illustrative. The run filled **pool 21**, which is terminal now, so the index
+answers for it exactly as it did during the run: the links go to the subgraph's own GraphiQL, and
+you can re-run each query yourself without a wallet, a clone, or anything installed.
+
+The endpoint is currently selling **pool 25**, open until 2026-10-10 — the same six steps, still
+payable, by anyone with three funded testnet accounts.
+
+#### 1 · the seller opens a pool
+
+The seller's action, and the only one that touches no server. `PUBLIC_BASE_URL` is what the pool
+records on-chain as the resource it sells, so it has to be the origin that will answer for it:
+
+```bash
+PUBLIC_BASE_URL=https://quorum402-coordinator.fly.dev \
+  npm run pool:open -- --slug agent-spend-eu --recipient seller --ttl 2592000
+```
+
+```
+pool 25 open on hedera:testnet
+
+  benchmark    agent-spend-eu-2026w37
+  resource     https://quorum402-coordinator.fly.dev/benchmark/agent-spend-eu
+  seat price   100000000 tinybars
+  threshold    3 distinct buyers
+  deadline     2026-10-10T16:53:10.000Z (2592000s)
+  coordinator  0.0.10404217  0xd71c8866104211a296ddb08b76d501a4096ac0cd
+  recipient    0.0.10434989  0x00000000000000000000000000000000009f39ad
+  contract     0.0.10409980
+  created by   0.0.10404217@1789059184.694498311  (168143 gas)
+```
+
+**Observe it** — [pool 25 in the index](https://quorum402-subgraph.fly.dev/subgraphs/name/quorum402/graphql?query=%7B%0A%20%20pool%28id%3A%20%2225%22%29%20%7B%0A%20%20%20%20poolId%0A%20%20%20%20state%0A%20%20%20%20seats%0A%20%20%20%20threshold%0A%20%20%20%20unitTinybars%0A%20%20%20%20deadline%0A%20%20%20%20resourceUrl%0A%20%20%20%20recipient%0A%20%20%20%20coordinator%0A%20%20%7D%0A%7D):
+`state: Open`, `seats: 0`, and the `resourceUrl` the coordinator will match requests against. The
+pool exists because the seller put it on the chain; the coordinator has still not been told
+anything, and will find it on its next read.
+
 Four properties of that sequence are load-bearing, and each is somewhere a simpler design would
 have gone wrong.
 
