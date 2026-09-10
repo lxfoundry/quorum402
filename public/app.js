@@ -607,5 +607,19 @@ setInterval(() => {
   // mid-switch would flick the screen back to the wallet being left. Never over another read
   // either - that guard used to live inside `refresh`, where it also swallowed the refreshes the
   // user asked for and left the screen a wallet behind.
+  //
+  // And never when nobody is looking. Every pool read behind this poll is a ContractCallQuery,
+  // which Hedera bills to the operator - the same account that pays for `recordDeposit` - so a
+  // backgrounded tab used to cost exactly what a watched one does, and a demo left open long
+  // enough draws the coordinator below the floor at which it may settle anything at all. The
+  // page is describing state to a person; with no person there it has nothing to describe.
+  if (document.hidden) return;
   if (!waits && !inFlight) refresh();
 }, POLL_MS);
+
+// Coming back should not mean waiting out the rest of an interval. A tab returned to is the
+// moment the page is most likely to be read, and up to POLL_MS of visibly stale numbers is the
+// wrong trade for the reads that were just saved.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && !waits && !inFlight) refresh();
+});

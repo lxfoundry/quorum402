@@ -97,6 +97,8 @@ interface Stubs {
   isRecordedThrows?: boolean;
   /** The ledger's answer about an account. A key that cannot sign is a missing `key`, not a throw. */
   accountOf?: ServerDeps["accountOf"];
+  /** The coordinator's own balance being unreadable, as distinct from being low. */
+  coordinatorBalanceThrows?: boolean;
 }
 
 function deps(stubs: Stubs = {}): ServerDeps & { logged: string[]; reads: string[] } {
@@ -165,7 +167,11 @@ function deps(stubs: Stubs = {}): ServerDeps & { logged: string[]; reads: string
         evmAddress: BUYER_EVM,
         key: { type: "ECDSA_SECP256K1", hex: buyerKey.publicKey.toStringRaw() },
       })),
-    coordinatorBalanceTinybars: async () => stubs.coordinatorBalance ?? 10_000_000_000n,
+    coordinatorBalanceTinybars: async () => {
+      reads.push("coordinatorBalance");
+      if (stubs.coordinatorBalanceThrows) throw new Error("mirror node unreachable");
+      return stubs.coordinatorBalance ?? 10_000_000_000n;
+    },
     index: stubs.noIndex
       ? undefined
       : {
@@ -631,5 +637,61 @@ describe("§6 lifecycle", () => {
 
     assert.equal(res.status, 200);
     assert.ok(benchmarks.some((b) => b.url === RESOURCE));
+  });
+
+  describe("readiness, as distinct from liveness", () => {
+    it("says it can settle when the coordinator clears the floor", async () => {
+      const res = await request(deps({ coordinatorBalance: 10_000_000_000n }), "/readyz");
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.canSettle, true);
+      assert.equal(res.body.balanceTinybars, "10000000000");
+      assert.equal(res.body.floorTinybars, "500000000");
+    });
+
+    it("refuses, and names the same reason a payer would have been refused with", async () => {
+      // The state the hosted coordinator sat in for a day on 2026-09-10: solvent enough to
+      // answer, too poor to record anything. `preflight` turns payments away with this exact
+      // string, so the answer here and the answer a buyer got are one grep apart.
+      const res = await request(deps({ coordinatorBalance: 2_237_078n }), "/readyz");
+
+      assert.equal(res.status, 503);
+      assert.equal(res.body.canSettle, false);
+      assert.equal(res.body.reason, "coordinator-underfunded");
+      assert.equal(res.body.balanceTinybars, "2237078");
+    });
+
+    it("reports the floor exactly, not one tinybar either side of it", async () => {
+      // A boundary worth pinning: `preflight` settles at the floor and refuses below it, and a
+      // readiness check that disagreed by one tinybar would report not-ready while payments
+      // went through - which is worse than saying nothing, because it would be believed.
+      const at = await request(deps({ coordinatorBalance: 500_000_000n }), "/readyz");
+      const below = await request(deps({ coordinatorBalance: 499_999_999n }), "/readyz");
+
+      assert.equal(at.status, 200);
+      assert.equal(below.status, 503);
+    });
+
+    it("distinguishes a balance it cannot read from one that is too low", async () => {
+      const res = await request(deps({ coordinatorBalanceThrows: true }), "/readyz");
+
+      assert.equal(res.status, 503);
+      assert.equal(res.body.reason, "balance-unreadable");
+      // No balance is reported, because none was read. Reporting 0 here would be a lie shaped
+      // exactly like the failure it is standing in for.
+      assert.equal(res.body.balanceTinybars, undefined);
+    });
+
+    it("leaves /healthz answering without touching the network", async () => {
+      // `fly.toml` points its check at /healthz precisely because it reads nothing external,
+      // so the machine is not replaced over somebody else's outage. This asserts that
+      // property rather than trusting it: the balance read fails, and /healthz does not care.
+      const d = deps({ coordinatorBalanceThrows: true });
+      const res = await request(d, "/healthz");
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.ok, true);
+      assert.deepEqual(d.reads, []);
+    });
   });
 });
