@@ -185,9 +185,13 @@ async function stateFor(
 /**
  * One card per benchmark, showing **the pool a payment would actually land in**.
  *
- * `sellingPoolFor`, not the newest pool, because that is the resolution the coordinator itself
- * makes: where several pools name a resource the earliest one still selling wins. Showing any
- * other pool would put a price and a seat count next to a Pay button that funds a different one.
+ * `sellingPoolFor`, because that is the resolution the coordinator itself makes: where several
+ * pools name a resource, the earliest one still *selling* wins. Showing any other pool would put
+ * a price and a seat count next to a Pay button that funds a different one.
+ *
+ * When none is selling it hands back the newest match instead - a pool to name rather than one
+ * to pay into. The card shows that one with its button disabled and, where several pools name
+ * the resource, a line saying which of them it is.
  */
 async function servicesFor(ctx: DemoContext, cache: PoolStatusCache, now: number) {
   const { cfg } = ctx.coordinator;

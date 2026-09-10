@@ -194,7 +194,8 @@ paying calls the same [`buySeat`](src/buyer/agent.ts) the CLI calls, and redeemi
 
 What it shows that a terminal does not:
 
-- **the crowd filling one pool** — the seat bar, the threshold, and the deadline counting down
+- **the crowd filling one pool** — one dot per seat on the card that names it, the threshold,
+  and the deadline counting down
 - **the protocol**, in a log along the bottom. The seat counter climbing through each `402`, and
   the `202` that exists nowhere else in x402, and the `200` that arrives for whichever buyer
   completes the crowd

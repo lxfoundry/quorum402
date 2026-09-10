@@ -26,7 +26,7 @@ export interface LogEntry {
 }
 
 /**
- * How many lines the page shows, and therefore how many are worth keeping.
+ * How many lines the page holds. It shows five at a time and scrolls back through the rest.
  *
  * One number rather than two: a buffer that held more than the only reader ever asks for would
  * retain lines that can never be displayed, and invite the question which bound governs.
