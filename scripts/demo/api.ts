@@ -563,6 +563,25 @@ class PoolStatusCache {
 
   constructor(private readonly ctx: DemoContext) {}
 
+  /**
+   * Which pool a resource is selling, cached for a poll and shared by everything asking at once.
+   *
+   * **A failed read here is not caught, and `live` below catches its own.** The asymmetry is
+   * deliberate and it has a cost worth naming.
+   *
+   * `live` has somewhere to fall back to: a pool it cannot read still has whatever the index
+   * last said about it, and a slightly stale state is a better answer than none. There is no
+   * equivalent second source for *which pool is selling a URL* - that fact exists only in the
+   * registry's scan of the chain, and the previous answer may name a pool that has since filled
+   * or expired. Falling back to it would put a live Pay button on a pool that cannot take one,
+   * which is a worse failure than not drawing the card.
+   *
+   * So the read is allowed to fail, and because `servicesFor` gathers the benchmarks with
+   * `Promise.all`, one benchmark failing fails the whole `/demo/api/state` response rather than
+   * one card. The page keeps its last render and says so after two consecutive failures. The
+   * limitation is that it does not degrade a card at a time: containing it means deciding what
+   * an unreadable card shows, which is a question about the page rather than about this cache.
+   */
   async advertised(resourceUrl: string): Promise<Advertised> {
     const hit = this.advertisedByUrl.get(resourceUrl);
     if (hit && Date.now() - hit.at < POOL_CACHE_MS) return hit.value;
