@@ -234,7 +234,7 @@ function serviceCard(service, seller) {
   // left column drawing the same crowd *without* the reader in it was the asymmetry - not the
   // ring. A refunded deposit gave its seat back and is not in this crowd any more.
   const own = state.seats.find((s) => s.poolId === pool.poolId && !s.refunded);
-  card.append(seatDots(pool.filled, pool.threshold));
+  card.append(seatDots(pool.filled, pool.threshold, own?.seat ?? undefined));
 
   const facts = el("div", "facts");
   facts.append(pill(pool.state));
