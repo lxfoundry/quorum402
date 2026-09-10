@@ -148,9 +148,14 @@ export function cast(args: Args, network: string, operatorId: string, seats: num
   const ids = new Set(buyers.map((b) => b.accountId));
   if (ids.size !== buyers.length) throw new Error("the same account was named twice as a buyer");
 
+  // A `seller`-labelled account first, then whoever is left. Positional order was enough while
+  // the file held exactly one spare account; with a fourth buyer in it, "the first account that
+  // is not a buyer" is buyer4, and a run would pay the seats to a buyer and report it as the
+  // seller's payout. The label is the same signal the demo reads roles from.
+  const free = accounts.filter((a) => !ids.has(a.accountId) && a.accountId !== operatorId);
   const recipient = args.recipient
     ? named(args.recipient)
-    : accounts.find((a) => !ids.has(a.accountId) && a.accountId !== operatorId);
+    : (free.find((a) => a.label.startsWith("seller")) ?? free[0]);
   if (!recipient) {
     throw new Error(
       `no account left to receive the payout. Run: npm run accounts:create -- ${seats + 1}`,

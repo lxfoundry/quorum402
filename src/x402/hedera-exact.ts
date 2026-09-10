@@ -94,7 +94,7 @@ export function decodePaymentHeader(header: string): PaymentPayload {
   return JSON.parse(Buffer.from(header, "base64").toString("utf8")) as PaymentPayload;
 }
 
-export const TINYBARS_PER_HBAR = 100_000_000n;
+const TINYBARS_PER_HBAR = 100_000_000n;
 
 /** A plain decimal HBAR amount, at most 8 fractional digits. No exponent form. */
 const HBAR_DECIMAL = /^\d+(?:\.\d{1,8})?$/;
@@ -116,4 +116,24 @@ export function hbarToTinybars(hbar: string): bigint {
   }
   const [whole = "0", frac = ""] = hbar.split(".");
   return BigInt(whole) * TINYBARS_PER_HBAR + BigInt(frac.padEnd(8, "0"));
+}
+
+/**
+ * Tinybars as a plain decimal HBAR amount - the inverse of `hbarToTinybars`, and its neighbour
+ * so the pair can be read, and tested, as one convention.
+ *
+ * Exact: the whole and fractional halves are divided out as BigInts and joined as text, so no
+ * float goes near a price. Trailing zeros are trimmed, and the sign is carried on the front
+ * rather than left to fall out of the arithmetic - `-1n / 100_000_000n` is `0n`, so a negative
+ * amount formatted naively loses its sign and reads as a positive fraction.
+ *
+ * No unit suffix: a log line wants `"1.5 HBAR"` and a UI wants `1.5 ℏ`, and that is the caller's
+ * to append.
+ */
+export function tinybarsToHbar(tinybars: bigint): string {
+  const negative = tinybars < 0n;
+  const absolute = negative ? -tinybars : tinybars;
+  const whole = absolute / TINYBARS_PER_HBAR;
+  const fraction = (absolute % TINYBARS_PER_HBAR).toString().padStart(8, "0").replace(/0+$/, "");
+  return `${negative ? "-" : ""}${whole}${fraction ? `.${fraction}` : ""}`;
 }

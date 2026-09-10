@@ -55,6 +55,37 @@ function registryOver(pools: PoolTerms[], states?: PoolState[], guardSeconds = 3
 }
 
 describe("pool registry", () => {
+  it("reads forward once when two requests arrive together", async () => {
+    // The normal case, not a corner: a page showing every benchmark asks about each of them at
+    // once, so two lookups routinely enter the scan before either has finished. `scanned` cannot
+    // move until a `poolOf` has resolved, so without a guard both read forward from the same
+    // point and file every pool id twice - and each duplicate is a contract read, on every
+    // later lookup, forever.
+    const { registry, reads } = registryOver([terms(0n), terms(1n)]);
+
+    const [first, second] = await Promise.all([
+      registry.poolsFor(RESOURCE),
+      registry.poolsFor(RESOURCE),
+    ]);
+
+    assert.deepEqual(reads, [0n, 1n]);
+    assert.deepEqual(first, [0n, 1n]);
+    assert.deepEqual(second, [0n, 1n]);
+    // Otherwise the two assertions above are one assertion made twice, against a single array
+    // both callers were handed.
+    assert.notEqual(first, second, "each caller gets its own array");
+  });
+
+  it("hands back a copy, so a caller cannot edit what the next lookup returns", async () => {
+    const { registry } = registryOver([terms(0n), terms(1n)]);
+
+    const mine = await registry.poolsFor(RESOURCE);
+    mine.push(99n);
+    mine.reverse();
+
+    assert.deepEqual(await registry.poolsFor(RESOURCE), [0n, 1n]);
+  });
+
   it("resolves a resource URL to the pool that named it", async () => {
     const { registry } = registryOver([terms(0n, { resourceUrl: OTHER }), terms(1n)]);
 
@@ -67,6 +98,34 @@ describe("pool registry", () => {
 
     assert.deepEqual(await registry.poolsFor("https://quorum402.example/nothing"), []);
     assert.equal(await registry.sellingPoolFor("https://quorum402.example/nothing"), undefined);
+  });
+
+  it("keeps the pools it read when a scan fails partway through", async () => {
+    // `poolOf` is a network read and can throw halfway, which is the other way one scan can
+    // file what an earlier one already filed. The cursor moves with each pool rather than at
+    // the end, so a scan that dies at pool 1 does not hand pool 0 back to the next one.
+    const all = [terms(0n), terms(1n), terms(2n)];
+    const reads: bigint[] = [];
+    let thrown = false;
+    const stub: PoolReader = {
+      poolCount: async () => BigInt(all.length),
+      poolOf: async (poolId) => {
+        reads.push(poolId);
+        if (poolId === 1n && !thrown) {
+          thrown = true;
+          throw new Error("mirror node unreachable");
+        }
+        return all[Number(poolId)]!;
+      },
+      statusOf: async (poolId) => all[Number(poolId)]!.state,
+    };
+    const registry = new PoolRegistry(stub, { now: () => NOW, guardSeconds: 30 });
+
+    await assert.rejects(registry.poolsFor(RESOURCE), /mirror node unreachable/);
+    assert.deepEqual(reads, [0n, 1n], "it stopped where it failed");
+
+    assert.deepEqual(await registry.poolsFor(RESOURCE), [0n, 1n, 2n]);
+    assert.deepEqual(reads, [0n, 1n, 1n, 2n], "pool 0 is not read again - nor filed twice");
   });
 
   it("reads only the pools it has not seen before", async () => {
@@ -133,13 +192,29 @@ describe("pool registry", () => {
       assert.equal(selling?.terms.poolId, 1n, "pool 0 is closed, so pool 1 sells");
     });
 
-    it("reports the earliest match when none of them can sell", async () => {
+    it("reports the most recent match when none of them can sell", async () => {
       // The caller needs this to tell 404 from a closed pool, which `undefined` cannot say.
+      // The newest of them, because that is the pool a payer was last advertised and the only
+      // one whose `reason` is still about something they saw.
       const { registry } = registryOver([terms(0n), terms(1n)], ["Met", "Expired"]);
 
       const selling = await registry.sellingPoolFor(RESOURCE);
       assert.equal(selling?.available, false);
-      assert.equal(selling?.terms.poolId, 0n);
+      assert.equal(selling?.terms.poolId, 1n);
+    });
+
+    it("walks past every closed pool to reach the newest", async () => {
+      // Three rather than two: with a pair, "the newest" and "not the first" are the same
+      // assertion, and a fallback that kept the second pool it saw would pass either way.
+      const { registry } = registryOver([terms(0n), terms(1n), terms(2n)], [
+        "Released",
+        "Met",
+        "Expired",
+      ]);
+
+      const selling = await registry.sellingPoolFor(RESOURCE);
+      assert.equal(selling?.available, false);
+      assert.equal(selling?.terms.poolId, 2n);
     });
   });
 });

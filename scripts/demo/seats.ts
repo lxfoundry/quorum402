@@ -94,7 +94,6 @@ export interface SeatRow {
   threshold: number;
   deadline: number;
   secondsLeft: number;
-  unitTinybars: string;
   action: SeatAction;
 }
 
@@ -162,7 +161,6 @@ export function mergeSeats(params: {
       threshold: pool.threshold,
       deadline: pool.deadline,
       secondsLeft: Math.max(0, pool.deadline - params.now),
-      unitTinybars: pool.unitTinybars.toString(),
       action: seatAction({ counted: seat.counted, refunded: seat.refunded, state }),
     });
   };

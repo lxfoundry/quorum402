@@ -67,6 +67,8 @@ export class PoolRegistry {
    */
   private readonly byUrl = new Map<string, bigint[]>();
   private scanned = 0n;
+  /** The scan currently reading forward, so concurrent callers join it rather than repeat it. */
+  private scanning: Promise<void> | undefined;
 
   constructor(
     private readonly reader: PoolReader,
@@ -84,7 +86,12 @@ export class PoolRegistry {
    */
   async poolsFor(resourceUrl: string): Promise<bigint[]> {
     await this.scan();
-    return this.byUrl.get(resourceUrl) ?? [];
+    // A copy. The array behind it is the registry's own index and it is appended to by every
+    // later scan, so handing out the reference lets a caller edit what the next lookup returns
+    // and makes two calls that "both returned [0, 1]" the same object asserted twice. Nothing
+    // mutates it today, which is the whole reason to close it now rather than after something
+    // does.
+    return [...(this.byUrl.get(resourceUrl) ?? [])];
   }
 
   /**
@@ -92,19 +99,44 @@ export class PoolRegistry {
    *
    * Where several pools name the URL, the earliest one that is still selling wins - so a
    * second pool created over the same resource takes over only once the first stops, and the
-   * choice does not depend on when the question is asked.
+   * choice does not depend on when the question is asked. Where *none* of them is selling it
+   * hands back the newest, which is not a pool to pay into but is the one worth reporting.
    */
   async sellingPoolFor(resourceUrl: string): Promise<PoolAvailability | undefined> {
-    let firstSeen: PoolAvailability | undefined;
-    for (const poolId of await this.poolsFor(resourceUrl)) {
+    return (await this.advertisedFor(resourceUrl)).pool;
+  }
+
+  /**
+   * The same answer, plus how many pools have ever named this URL.
+   *
+   * One call rather than `sellingPoolFor` followed by `poolsFor`, because `scan` reads
+   * `poolCount` off the contract every time it runs and asking twice pays for that twice. The
+   * count is what lets a caller say *which* of a resource's pools it is showing - one pool of
+   * four reads very differently from the only pool there has ever been.
+   */
+  async advertisedFor(
+    resourceUrl: string,
+  ): Promise<{ pool: PoolAvailability | undefined; poolCount: number }> {
+    const poolIds = await this.poolsFor(resourceUrl);
+    let latest: PoolAvailability | undefined;
+    for (const poolId of poolIds) {
       const availability = await this.availability(poolId);
-      if (availability.available) return availability;
-      firstSeen ??= availability;
+      if (availability.available) return { pool: availability, poolCount: poolIds.length };
+      latest = availability;
     }
-    // Nothing is selling. Hand back the earliest match anyway when there was one: the caller
-    // answers 404 for "no pool names this URL" and something else for "this pool is closed",
-    // and it cannot tell those apart from `undefined`.
-    return firstSeen;
+    // Nothing is selling. Hand back the *most recent* match anyway when there was one: the caller
+    // answers 404 for "no pool names this URL" and something else for "this pool is closed", and
+    // it cannot tell those apart from `undefined`.
+    //
+    // The newest rather than the oldest, which is what this returned until 2026-09-10. Both are
+    // correct for the question the caller is asking - is there a pool here at all - and the
+    // newest is the better answer to every question that follows it. It is the pool a payer was
+    // most likely advertised, so the `reason` reported beside a payment that arrived too late
+    // describes the pool they actually saw; and it is the one worth naming on a screen, where the
+    // oldest is typically a pool released weeks ago and reads as though the demo were stuck.
+    //
+    // Free: the loop has already read every pool whenever none of them could sell.
+    return { pool: latest, poolCount: poolIds.length };
   }
 
   /** Whether this pool can take a payment now, and if not, why not. */
@@ -128,19 +160,43 @@ export class PoolRegistry {
   }
 
   /**
-   * Read forward from the last pool this registry has seen.
+   * Read forward from the last pool this registry has seen, once at a time.
    *
    * Costs one `poolCount` call per request and one `poolOf` per pool that has appeared since
    * the last one - which is zero on almost every request.
+   *
+   * One at a time because `scanned` cannot move until a `poolOf` has resolved: two requests
+   * arriving together - which is the normal case, since a page showing every benchmark asks
+   * about each of them at once - would otherwise both read forward from the same point and
+   * push every new pool id into `byUrl` twice. Nothing would resolve to the wrong pool, but
+   * every later lookup would walk the duplicates and pay for a contract read per copy, for
+   * the life of the process.
+   *
+   * The cost of joining rather than starting: a caller that arrives mid-scan gets the pool
+   * count read when that scan began, so a pool created between the two is invisible until the
+   * next lookup. That is the right trade at a four-second poll - one extra poll of staleness
+   * against a permanent duplicate read - and it is bounded, because the next scan starts from
+   * `scanned` and finds it.
    */
   private async scan(): Promise<void> {
+    this.scanning ??= this.readForward().finally(() => {
+      this.scanning = undefined;
+    });
+    return this.scanning;
+  }
+
+  private async readForward(): Promise<void> {
     const count = await this.reader.poolCount();
     for (let poolId = this.scanned; poolId < count; poolId++) {
       const terms = await this.reader.poolOf(poolId);
       const existing = this.byUrl.get(terms.resourceUrl);
       if (existing) existing.push(poolId);
       else this.byUrl.set(terms.resourceUrl, [poolId]);
+      // Per pool, not once at the end. `poolOf` is a network read and can throw halfway, and
+      // moving the cursor only afterwards would leave the ids already filed to be filed again
+      // by the next scan - the same permanent duplicate cost, reached through a failed read
+      // rather than a concurrent one.
+      this.scanned = poolId + 1n;
     }
-    this.scanned = count;
   }
 }

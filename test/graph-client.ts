@@ -20,16 +20,27 @@ const TX = "0.0.1001@1788945000.000000000";
 
 const realFetch = globalThis.fetch;
 
+/** The client under test. It holds nothing but the URL, so one serves every case. */
+const client = new GraphClient({ url: URL });
+
+interface Asked {
+  calls: number;
+  /** The variables of the most recent request, for the cases that pin what was sent. */
+  variables?: Record<string, unknown>;
+}
+
 /** Answers every request with one canned GraphQL body, and records what was asked. */
-function answering(body: unknown): { calls: number } {
-  const state = { calls: 0 };
-  globalThis.fetch = (async () => {
+function answering(body: unknown): Asked {
+  const state: Asked = { calls: 0 };
+  globalThis.fetch = (async (_url: unknown, init?: { body?: string }) => {
     state.calls += 1;
+    const sent = JSON.parse(init?.body ?? "{}") as { variables?: Record<string, unknown> };
+    state.variables = sent.variables;
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
-  }) as typeof globalThis.fetch;
+  }) as unknown as typeof globalThis.fetch;
   return state;
 }
 
@@ -41,7 +52,7 @@ describe("resolving a settlement to a deposit", () => {
   it("reports the position and how far the index has read", async () => {
     answering({ data: { deposits: [{ depositId: "2" }], _meta: { block: { number: 4242 } } } });
 
-    const found = await new GraphClient({ url: URL }).depositFor("7", TX);
+    const found = await client.depositFor("7", TX);
 
     assert.equal(found.depositId, 2n);
     assert.equal(found.indexedBlock, 4242n);
@@ -50,7 +61,7 @@ describe("resolving a settlement to a deposit", () => {
   it("reports no row, with the lag that explains it", async () => {
     answering({ data: { deposits: [], _meta: { block: { number: 4242 } } } });
 
-    const found = await new GraphClient({ url: URL }).depositFor("7", TX);
+    const found = await client.depositFor("7", TX);
 
     assert.equal(found.depositId, undefined);
     assert.equal(found.indexedBlock, 4242n);
@@ -65,7 +76,7 @@ describe("resolving a settlement to a deposit", () => {
       errors: [{ message: "Failed to get block number" }],
     });
 
-    const found = await new GraphClient({ url: URL }).depositFor("7", TX);
+    const found = await client.depositFor("7", TX);
 
     assert.equal(found.depositId, 2n);
     assert.equal(found.indexedBlock, undefined);
@@ -74,7 +85,7 @@ describe("resolving a settlement to a deposit", () => {
   it("reports no row when only the lag came back", async () => {
     answering({ data: { deposits: [], _meta: null }, errors: [{ message: "no block" }] });
 
-    const found = await new GraphClient({ url: URL }).depositFor("7", TX);
+    const found = await client.depositFor("7", TX);
 
     assert.equal(found.depositId, undefined);
     assert.equal(found.indexedBlock, undefined);
@@ -90,7 +101,7 @@ describe("resolving a settlement to a deposit", () => {
     });
 
     await assert.rejects(
-      new GraphClient({ url: URL }).depositFor("7", TX),
+      client.depositFor("7", TX),
       /statement timeout/,
       "the upstream reason should survive, so a 503 is diagnosable",
     );
@@ -99,7 +110,7 @@ describe("resolving a settlement to a deposit", () => {
   it("refuses a response carrying no data at all", async () => {
     answering({ errors: [{ message: "connection refused" }] });
 
-    await assert.rejects(new GraphClient({ url: URL }).depositFor("7", TX), /connection refused/);
+    await assert.rejects(client.depositFor("7", TX), /connection refused/);
   });
 
   it("refuses to guess when the index contradicts the replay guard", async () => {
@@ -107,13 +118,13 @@ describe("resolving a settlement to a deposit", () => {
     // is global. Taking the first would resolve a disagreement with consensus by picking a side.
     answering({ data: { deposits: [{ depositId: "2" }, { depositId: "5" }], _meta: null } });
 
-    await assert.rejects(new GraphClient({ url: URL }).depositFor("7", TX), /2 deposits/);
+    await assert.rejects(client.depositFor("7", TX), /2 deposits/);
   });
 
   it("asks once, because the lag rides on the deposit query", async () => {
     const state = answering({ data: { deposits: [], _meta: { block: { number: 4242 } } } });
 
-    await new GraphClient({ url: URL }).depositFor("7", TX);
+    await client.depositFor("7", TX);
 
     assert.equal(state.calls, 1);
   });
@@ -130,20 +141,6 @@ describe("a buyer's deposits", () => {
   afterEach(() => {
     globalThis.fetch = realFetch;
   });
-
-  /** Like `answering`, but keeps the variables it was asked with. */
-  function recording(body: unknown): { variables?: Record<string, unknown> } {
-    const state: { variables?: Record<string, unknown> } = {};
-    globalThis.fetch = (async (_url: unknown, init?: { body?: string }) => {
-      const sent = JSON.parse(init?.body ?? "{}") as { variables?: Record<string, unknown> };
-      state.variables = sent.variables;
-      return new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }) as unknown as typeof globalThis.fetch;
-    return state;
-  }
 
   const DEPOSIT = {
     depositId: "1",
@@ -164,9 +161,9 @@ describe("a buyer's deposits", () => {
   };
 
   it("decodes the deposit and the pool it landed in", async () => {
-    recording({ data: { deposits: [DEPOSIT], _meta: { block: { number: 4242 } } } });
+    answering({ data: { deposits: [DEPOSIT], _meta: { block: { number: 4242 } } } });
 
-    const { deposits, indexedBlock } = await new GraphClient({ url: URL }).depositsFor("0xAb01");
+    const { deposits, indexedBlock } = await client.depositsFor("0xAb01");
 
     assert.equal(indexedBlock, 4242n);
     assert.equal(deposits.length, 1);
@@ -188,18 +185,18 @@ describe("a buyer's deposits", () => {
   it("asks in the case the index stores addresses in", async () => {
     // A checksummed address matches nothing rather than failing, so the buyer would be shown an
     // empty seat list and no error - the same trap `settlementFor` lowercases against.
-    const state = recording({ data: { deposits: [], _meta: null } });
+    const state = answering({ data: { deposits: [], _meta: null } });
 
-    await new GraphClient({ url: URL }).depositsFor("0xAbCdEf0123456789");
+    await client.depositsFor("0xAbCdEf0123456789");
 
     assert.equal(state.variables?.payer, "0xabcdef0123456789");
   });
 
   it("includes a payment that took no seat, because that is the refundable one", async () => {
     const late = { ...DEPOSIT, depositId: "2", counted: false, seatsAfter: 3 };
-    recording({ data: { deposits: [late], _meta: null } });
+    answering({ data: { deposits: [late], _meta: null } });
 
-    const { deposits } = await new GraphClient({ url: URL }).depositsFor("0xab");
+    const { deposits } = await client.depositsFor("0xab");
 
     assert.equal(deposits.length, 1);
     assert.equal(deposits[0]?.counted, false);
@@ -208,12 +205,12 @@ describe("a buyer's deposits", () => {
   it("refuses a pool state it does not know rather than defaulting to one", async () => {
     // Guessing here picks which button a payer is shown - Redeem or Claim refund - so a state
     // this client cannot read has to stop the render, not produce a plausible one.
-    recording({
+    answering({
       data: { deposits: [{ ...DEPOSIT, pool: { ...DEPOSIT.pool, state: "Settled" } }], _meta: null },
     });
 
     await assert.rejects(
-      new GraphClient({ url: URL }).depositsFor("0xab"),
+      client.depositsFor("0xab"),
       /unknown pool state "Settled"/,
     );
   });

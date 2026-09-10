@@ -53,6 +53,9 @@ was rejected.
 | 2026-09-09 | The refund path, end to end (`scripts/e2e/quorum-missed.ts`, `src/pool/client.ts`) | Found that the contract's two refund methods had no caller anywhere above Solidity, added them to the pool client, and wrote the scenario that drives a pool past its deadline one seat short and refunds both payers on testnet | Chose to spend the remaining build time proving the failure path rather than finishing the README, on the grounds that a demo of an all-or-nothing primitive that only ever shows the *all* has shown the easy half. Called for both of §9's reversal paths in one run rather than the cheaper one, since they exist for different people |
 | 2026-09-09 | The demo UI (`scripts/demo/`, `public/`, `src/hedera/explorer.ts`) | Checked the HashScan link format against the mirror node instead of assuming it, and found the existing one was built on the spelling the API rejects; wrote the control plane, the page, and the seat rules — copied from `_isRefundable` and §8 step 5 rather than reasoned about again — then drove both scenarios against testnet | Asked for a product a buyer could recognise rather than a control panel, and for no text entry anywhere in it. Refused to let the page imply a buyer can pick a pool, since nothing in the `quorum` exchange carries a pool id and every such button but one would be a lie. Ruled out hosting it, because the process holding the buyer keys is not one to publish |
 | 2026-09-09 | Hosting the coordinator (`Dockerfile`, `fly.toml`) | Read the image's failure mode out of the code before building it — the ABI is loaded lazily from `artifacts/`, which is gitignored, so an image built without `npm run build` starts, passes its health check and fails on the first request that touches the chain — then wrote the container, the app config and the README's walkthrough of the live 402 | Asked for the server to be reachable rather than demonstrated from a laptop, on the same grounds the subgraph moved: a 402 nobody can curl is a claim, not a demonstration. Approved opening a pool against the public origin, so what is hosted has something to sell |
+| 2026-09-10 | The demo page's waits, and the seller's form (`public/`) | Traced a morning of failing Hedera calls to a system clock an hour behind real time, then fixed three things the page did badly once it worked again: nothing marked a wait, the four-second poll rebuilt the seller's half-made form from scratch, and the threshold list ignored which service was selected. Checked the result by loading the real `public/app.js` in a throwaway stubbed DOM and asserting the behaviour, rather than by watching the page | Reported the symptom precisely enough to be diagnosable - the error text, its ten-second cadence, and that it was new that morning. Chose how strong the wait treatment should be, and required it to cover actions and wallet switches rather than only the cold start |
+| 2026-09-10 | Reading the demo page, and a fourth buyer (`public/`, `src/server/pools.ts`, `scripts/`) | Diagnosed three unrelated pool ids on one screen by querying the live subgraph for every pool the contract holds, rather than by reading the code - which is what found it, because `sellingPoolFor`'s fallback to the *earliest* matching pool reads as a defensible choice in isolation and only the real data shows it naming a pool released weeks earlier. Then moved seat occupancy onto the card that names the pool, gave the page a product identity, and checked the result by screenshotting the running page in headless Chrome at the video's 720p floor instead of reasoning about the CSS - which is how the sliced log line was found. Wrongly asserted in the plan that the new pool count was free, then found `scan` re-reads `poolCount` on every call and folded both answers into one registry method rather than pay twice | Reported that the page's pool numbering was unreadable, precisely enough to be checkable - which of the three ids appeared where. Chose to fix the crowd strip by deleting it and moving its meaning onto the pool card, over the alternative of a per-buyer subgraph query that would have made its dots true; held the line that the left column must not become a pool picker, since nothing in the `quorum` exchange carries a pool id, and required the page to disclose what it filters instead |
+| 2026-09-10 | Review of the whole branch, and two fixes from it (`public/app.js`) | Reviewed the 25-commit branch in one pass against the specs, then verified both blocking findings against the tree before acting on either - the reports' anchors have been wrong before. Rebuilt the stubbed-DOM check the earlier session threw away, and confirmed each fix by reverting *it alone* and watching its own assertion fail | Asked for the review and chose its scope, twice: first the two blocking findings and the three stale comments, then - having seen them land - every remaining Minor as well, and finally the test file the reviewer had asked for. Nothing from the review was declined on grounds of taste; the one recommendation not acted on is written into the code that carries it |
 
 ## 4. What was done without AI
 
@@ -394,6 +397,23 @@ the page whose entire purpose is being copied onto a machine that is not this on
 check that catches either is blind to the other. It is `grep -i`, `cut` and
 `openssl base64 -A -d` now, which mean the same thing everywhere.
 
+**2026-09-10 — explained a ten-second wait from the call graph, an hour after diagnosing its
+actual cause.** The demo page took about ten seconds to show anything, and the plan written to fix
+it opened by explaining why: `/demo/api/state` makes two contract queries per benchmark plus a
+mirror read and a subgraph read, none of them cached on the first call. That is a correct reading
+of the code and it was beside the point. The same session had, an hour earlier, found the
+machine's clock an hour behind real time and shown that every Hedera query was failing precheck
+with `TRANSACTION_EXPIRED`, regenerating the same stale transaction id and burning the SDK's full
+retry budget before giving up. Measured once the clock was fixed, the endpoint answers in 0.4s for
+a seller and 1.8s for a buyer. The ten seconds had already been fixed, and the explanation was of
+something that had stopped happening.
+
+The affordance was built anyway and is worth having — a sleeping Fly.io machine behind the index
+can put the wait back, and a blank column is a bad first frame at any duration. But it rested on
+an account of the latency that a single `curl` refuted, and the evidence against that account was
+already in the conversation that produced it. Reading a call graph yields an explanation shaped
+exactly like a measurement, which is what makes it easy to skip taking one.
+
 ## 6. Review, and what it caught
 
 The contract was reviewed by a second Claude Code session given only the diff, the spec and
@@ -576,3 +596,172 @@ than that second does not produce a flaky assertion — the `claimRefund` after 
 revert throws, and the scenario unwinds before `refundAll` runs, leaving both deposits in the
 contract with nothing left in the run to push them back out. The cost of the assumption was not
 the assertion it broke but the four steps behind it that never got to run.
+
+---
+
+### A cleanup pass over the demo UI, 2026-09-09
+
+The demo-UI branch was reviewed again after it merged, this time by four Claude Code agents run
+in parallel and told explicitly *not* to look for bugs: one each for duplication, unnecessary
+complexity, wasted work, and whether a fix sat at the right depth. They were given the diff and
+the tree, not the conversation. What came out of it was a branch of small commits — and then a
+second review, which found something the first one had introduced.
+
+The finding worth recording is the one the code had already claimed was impossible. `poolSummary`
+had been exported the week before, carrying a comment that it was exported *"because the demo UI
+renders the same six facts and inventing a second shape for them would let the two drift"* — and
+nothing ever imported it. The demo rebuilt all six fields by hand in the same branch. Three of
+the four agents found it independently, which is the only reason it is here: it is invisible to
+every tool in the repo, because an unused export and a hand-written object are both perfectly
+legal. The comment was not aspirational when it was written; it was false when it was written.
+
+That is the same category this file has been recording since the contract review — prose
+asserting a property nothing reached — but a step worse than the earlier cases. Those were specs
+describing a contract, two visibly separate artifacts. This was a doc comment on the function
+itself, written in the commit that made it untrue, and it read as evidence that the sharing had
+happened. A reader chasing "where does the page get its pool shape from" would have followed it
+to a dead end and concluded the question was answered.
+
+The other substantive finding was waste rather than wrongness, which is why nothing caught it
+either. `PoolRegistry.scan()` advanced its cursor only after every read resolved, so two lookups
+entering together both read forward from the same point and filed every pool id twice. Nothing
+resolved to the wrong pool — the ordering survives duplication — so no test could have failed.
+It only ever cost paid contract queries, permanently, and the page that asks about every
+benchmark at once triggers it on the first poll. A test now pins it, and it was confirmed to fail
+without the fix before being kept.
+
+**What the reviewers got wrong.** Line numbers, routinely — one cited a symbol at line 458 of a
+145-line file, and several anchors were off by enough that every finding had to be re-verified
+against the file before it could be acted on. More instructive: one agent argued the pool cache's
+three-second TTL "can never hit" because the page polls every four seconds. The arithmetic is
+right and the conclusion is wrong — the cache exists to stop one poll reading the same pool once
+per panel, not to serve the next poll — so the recommendation would have made a live demo staler
+to fix a problem that was not there. Two agents, ranked high and independently, also proposed
+preferring the chain's resolved state over the locally-derived one. That is a real inconsistency
+and possibly worth doing, but it changes which clock decides that a pool has expired; it was
+filed as a cleanup and it is not one.
+
+**The cleanup that could have killed the demo.** One finding was that all six demo handlers ended
+in `res.json(...)`, with `res` threaded through the route wrapper only to be called at the end.
+That is a real duplication and the repair — let the wrapper own the write — is the obvious one. It
+shipped in `50e36e1` with the write passed as `.then`'s first argument and the error handler as
+its second, which makes the two siblings rather than putting the handler downstream of the write,
+and drops the promise `.then` returns. A handler resolving with a `BigInt` — which any raw ledger
+amount is — throws inside `res.json`, and that throw then had nowhere to go: no 500, no log line,
+an unhandled rejection, and Node ends the process on those. The one failure the wrapper existed to
+catch was the one it stopped catching.
+
+Nothing in the repo noticed. Lint, `tsc` and the full suite passed, because the defect is a
+dropped promise on a path no test drove. It was caught in review on the pull request, two commits
+later, and fixed in `be96423`.
+
+That is a sharper case than the rest of this section. The other entries are about proposed changes
+that should not have been applied. This one *was* applied, and correctly identified — the
+duplication was real — and the repair introduced a way to take the process down. The lesson is not
+that the finding was wrong. It is that acting on a correct finding is itself a code change, and it
+needs the same review as the code that prompted it.
+
+**A correction to the record.** `be96423`'s message describes the bug as `res.json` having been
+handed to `.then`'s *"second-chance slot"*. It was in the fulfilment slot; the defect was the
+two-argument form, not which argument the write was. That commit is on a shared branch and its
+prose is not worth rewriting history for — §3 keeps the history as it happened — so the correction
+lives here. It belongs in this section on its own merits: this is the file that tracks comments
+asserting what the code does not do, and the commit that fixed one had the same flaw.
+
+The pattern across the four: agents told to find quality problems will find them, and the cost of
+that is not false positives so much as **confidently-argued changes to intended behaviour,
+presented in the same register as a dead-code removal.** Four of the fourteen findings applied
+were skipped for exactly that reason and are written down in the pull request rather than
+silently dropped. The reviews were worth running — three of them converged on the export nobody
+used — but none of the fourteen was safe to apply on the strength of the report alone.
+
+---
+
+### The branch reviewed as a whole, 2026-09-10
+
+The branch was reviewed once more before merging, by a single agent given the diff, the specs and
+the constraints — not the conversation — and told where the seats had already been spent: the
+first seventeen commits had had a Copilot pass, and the five findings the pull request had
+declined were handed over with the reasoning, so the pass would not spend itself re-arguing them.
+It returned no Critical findings, two Important, and eight Minor.
+
+Both Important findings were **interactions between commits that were each correct alone**, which
+is the class a per-commit review cannot see. The in-flight guard added in `77405aa` and the wallet
+switch's `waitFor(refresh)` added in `fdacc1e` never appeared in the same diff. Together they
+dropped a refresh the *user* had asked for, and the page then rendered one buyer's name and
+balance above another buyer's seat cards with live buttons on rows that were not theirs. The
+second was subtler: caching the seller's form fixed the reported symptom completely — selections
+do survive — while leaving `replaceChildren` to detach and re-attach the cached node every four
+seconds, which drops focus and closes an open dropdown. The bug reported was fixed; a bug nobody
+had reported, with the same appearance on camera, was not.
+
+Three of the Minor findings were sentences this branch had made false: a comment saying
+`sellingPoolFor` returns "not the newest pool" two commits after it started doing exactly that, a
+README naming a seat bar that had become dots, and a constant documented as what the page shows
+when it is what the page holds. §5 has been recording that fault since the contract review. It is
+worth noting that all three were *introduced by the fixes on this branch* rather than surviving
+from earlier work — the edit that changes behaviour and the sentence describing it are the same
+commit's responsibility, and three times here they parted company inside it.
+
+**What made this round different from the four that preceded it.** The line numbers were accurate
+and every finding survived checking, which is the opposite of the September 9 experience. The
+plausible reason is scope: one agent over a whole branch with the declined findings in hand, rather
+than four agents over one diff each with an instruction to find a category of problem. An agent
+told to find duplication will return duplication whether or not any is worth acting on; an agent
+asked whether a branch is ready to merge can answer that it nearly is.
+
+**The harness that was thrown away, and thrown away again.** The reviewer's third Important
+finding was that `public/app.js` carries the page's entire concurrency model and none of it is
+reachable by `npm test` — and that the stubbed-DOM harness written on 2026-09-09 would have caught
+both of the findings above, had it been kept. It was rebuilt to verify these two fixes: each was
+reverted on its own and its own assertion was confirmed to fail, which is how the form was found
+to be detached exactly twice by two polls. Then it was thrown away a second time, deliberately, as
+a call about the hours left rather than about its value. It is the one recommendation from this
+review that was understood, agreed with, and not acted on.
+
+**The eight Minor findings, and the one that was filed too low.** All eight were acted on after
+the two blocking ones. Six were what they looked like — a registry method handing out the array it
+indexes with, a page that wrote failed polls to a console nobody has open, a `busy` class that only
+a *working* script could remove, a service card drawing the crowd without marking the reader in it,
+and two sentences describing the code beside them.
+
+The seventh was not. `seatsElsewhere` was filed as wording: a count of deposits presented as a
+count of seats, capped at the index query's default of 25 and so a floor rather than a total.
+Reading the call site showed the same 25 governs `indexed`, which is what the *rendered* seat list
+is built from — so an address holding more than 25 deposits does not merely get an understated
+footnote, it gets a real seat in a pool this coordinator sells dropped from the page, while a note
+underneath explains a gap the query itself created. Ephemeral-port deposits from repeated
+`npm run e2e` runs are exactly what fills that window, on exactly the machine the demo is recorded
+from. It is now bounded at 100, and saturation is reported rather than assumed away.
+
+Worth recording because it runs the other way from everything else in this file. §5's pattern is
+reviewers arguing confidently for changes that should not be made; this was a reviewer describing
+a real defect in terms milder than it deserved, and only checking the finding against the code
+rather than against the report turned up the rest of it. A report's severity is a claim like any
+other in it.
+
+**The harness, and what building it found.** It was rebuilt a third time for these fixes, and
+then committed as `test/demo-page.ts` - eight tests, six of which fail against the branch as it
+stood that morning. `public/app.js` had been unreachable from the suite: a browser file the other
+tests cannot import and the type checker barely reads, holding the wait counter, the guard against
+overlapping reads, the sequence number that orders their answers and the form kept across renders.
+Every defect this round found lived there.
+
+What is worth recording is that **writing the stub found a bug the review had not.** Modelling
+`isConnected` honestly - true only while a node can be reached from `<body>` - made a countdown
+render as an empty span in the harness. That is not a stub artifact. `countdown` ticks once before
+returning its node, at which point the caller has not appended it, so `isConnected` is false for
+every countdown ever built: the first tick painted nothing and scheduled nothing, and no later
+tick existed to fix it. Every service card and every open seat card had carried a blank where the
+deadline goes since the demo UI landed, and the README lists "the deadline counting down" among
+what the page shows.
+
+Nothing could have caught it. It is legal code, the element is genuinely in the DOM, lint and
+`tsc` have no opinion, and the page looks complete unless you know a clock belongs in that row.
+Four review agents, a Copilot pass and a whole-branch review all read past it; so did every person
+who opened the page. It surfaced because a test had to answer a question none of them asked - what
+is in that span - and answering it required modelling the one DOM property the code depends on.
+
+That is the argument for the file, better than the one the reviewer made. A harness is usually
+defended as a net under future changes. This one paid for itself while being written, by forcing
+a claim about the rendered page to be stated precisely enough to be false.

@@ -26,7 +26,7 @@ import {
   resourceUrlFor,
 } from "../../src/benchmark/catalogue.js";
 import { buySeat, redeemSeat } from "../../src/buyer/agent.js";
-import type { GraphClient, IndexedPool } from "../../src/graph/client.js";
+import type { IndexedDeposit, IndexedPool } from "../../src/graph/client.js";
 import {
   hashscanAccount,
   hashscanContract,
@@ -34,10 +34,11 @@ import {
 } from "../../src/hedera/explorer.js";
 import { balanceTinybars } from "../../src/hedera/mirror.js";
 import { PoolsClient } from "../../src/pool/client.js";
-import type { PoolState, PoolTerms } from "../../src/pool/client.js";
+import { poolSummary } from "../../src/server/index.js";
 import type { Coordinator } from "../../src/server/index.js";
+import type { PoolAvailability, PoolRegistry } from "../../src/server/pools.js";
 import type { Receipt } from "../../src/server/receipt.js";
-import { hbarToTinybars, TINYBARS_PER_HBAR } from "../../src/x402/hedera-exact.js";
+import { hbarToTinybars, tinybarsToHbar } from "../../src/x402/hedera-exact.js";
 import { ProtocolLog } from "./log.js";
 import { mergeSeats } from "./seats.js";
 import type { LivePool, SeatRow } from "./seats.js";
@@ -82,49 +83,54 @@ export function demoApi(ctx: DemoContext): Router {
   const pools = new PoolStatusCache(ctx);
   const balances = new BalanceCache(ctx);
 
-  router.get("/api/state", handle(async (req, res) => {
+  router.get("/api/state", route((req) => {
     const label = typeof req.query.wallet === "string" ? req.query.wallet : undefined;
-    res.json(await stateFor(ctx, pools, balances, label));
+    return stateFor(ctx, pools, balances, label);
   }));
 
-  router.post("/api/pool", handle(async (req, res) => {
-    res.json(await openPool(ctx, req.body as OpenPoolBody));
-  }));
+  router.post("/api/pool", route((req) => openPool(ctx, req.body as OpenPoolBody)));
 
-  router.post("/api/buy", handle(async (req, res) => {
-    res.json(await buy(ctx, req.body as { wallet: string; slug: string }));
-  }));
+  router.post("/api/buy", route((req) => buy(ctx, req.body as { wallet: string; slug: string })));
 
-  router.post("/api/redeem", handle(async (req, res) => {
-    res.json(await redeem(ctx, pools, req.body as { wallet: string; poolId: string }));
-  }));
+  router.post("/api/redeem", route((req) =>
+    redeem(ctx, pools, req.body as { wallet: string; poolId: string })));
 
-  router.post("/api/refund", handle(async (req, res) => {
-    res.json(await refund(ctx, req.body as { wallet: string; poolId: string }));
-  }));
+  router.post("/api/refund", route((req) =>
+    refund(ctx, req.body as { wallet: string; poolId: string })));
 
-  router.post("/api/release", handle(async (req, res) => {
-    res.json(await release(ctx, req.body as { poolId: string }));
-  }));
+  router.post("/api/release", route((req) => release(ctx, req.body as { poolId: string })));
 
   return router;
 }
 
 /**
- * One error path for every route.
+ * One error path for every route, and one place the answer is written.
  *
  * Express 4 does not catch a rejection from an async handler, and an uncaught one here takes the
  * demo down mid-recording. The coordinator makes the same provision for the same reason.
+ *
+ * Every route here answers with a JSON body and nothing else - none of them streams, and none
+ * writes a header before its work is done - so the wrapper can own `res` entirely and each route
+ * is left saying only what it computes.
+ *
+ * The write is inside the chain rather than beside it, because serialising the body can throw too -
+ * a BigInt reaches `res.json` from anything holding a raw ledger amount. That failure has to reach
+ * the same 500, so the `headersSent` guard stays: by then Express may already have answered.
  */
-function handle(
-  fn: (req: Request, res: Response) => Promise<void>,
+function route(
+  fn: (req: Request) => Promise<unknown>,
 ): (req: Request, res: Response) => void {
   return (req, res) => {
-    fn(req, res).catch((error: unknown) => {
-      const detail = error instanceof Error ? error.message : String(error);
-      console.error(`${req.method} ${req.originalUrl} failed: ${detail}`);
-      if (!res.headersSent) res.status(500).json({ error: detail });
-    });
+    Promise.resolve()
+      .then(() => fn(req))
+      .then((body) => {
+        res.json(body);
+      })
+      .catch((error: unknown) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(`${req.method} ${req.originalUrl} failed: ${detail}`);
+        if (!res.headersSent) res.status(500).json({ error: detail });
+      });
   };
 }
 
@@ -140,11 +146,21 @@ async function stateFor(
   const wallet = label ? ctx.wallets.find(label) : undefined;
   const now = Math.floor(Date.now() / 1000);
 
-  const [services, held, seats] = await Promise.all([
-    servicesFor(ctx, pools, now),
-    balances.all(),
-    wallet ? seatsFor(ctx, pools, wallet.evmAddress, wallet.label, now) : Promise.resolve([]),
-  ]);
+  // A seller's screen has no seat list on it - `sellerPanels` renders the pool-opening form
+  // instead - so asking the index for one would be a subgraph round trip per poll, all the way
+  // through the half of the demo where nobody has bought anything yet.
+  const mine = wallet && wallet.role !== "seller" ? wallet : undefined;
+  // `servicesFor` resolves the advertised pool and files it under its pool id, and that is
+  // almost always a pool the seat list is about to ask about as well. Started together the two
+  // race: `seatsFor` opens with a subgraph round trip, which normally beats the two sequential
+  // contract reads behind `servicesFor`, so both reach the chain before either has filed an
+  // answer and the pool on screen is read twice. Letting the advertised read land first is
+  // what makes it one read per pool per poll. `balances.all()` hits the mirror node instead,
+  // shares nothing with either, and still goes in parallel.
+  const [services, held] = await Promise.all([servicesFor(ctx, pools, now), balances.all()]);
+  const mySeats = mine
+    ? await seatsFor(ctx, pools, mine.evmAddress, mine.label, now)
+    : { seats: [], elsewhere: 0, capped: false };
 
   return {
     network: deps.network,
@@ -156,11 +172,13 @@ async function stateFor(
     wallets: ctx.wallets.all().map((w) => ({
       ...w,
       accountUrl: hashscanAccount(deps.network, w.accountId),
-      hbar: hbarText(held.get(w.accountId) ?? 0n),
+      hbar: tinybarsToHbar(held.get(w.accountId) ?? 0n),
     })),
     choices: { ttl: TTL_CHOICES, seatHbar: SEAT_HBAR_CHOICES },
     services,
-    seats: seats.map((seat) => withLinks(deps.network, seat)),
+    seats: mySeats.seats.map((seat) => withLinks(deps.network, seat)),
+    seatsElsewhere: mySeats.elsewhere,
+    seatsCapped: mySeats.capped,
     log: ctx.log.tail(),
   };
 }
@@ -168,16 +186,20 @@ async function stateFor(
 /**
  * One card per benchmark, showing **the pool a payment would actually land in**.
  *
- * `sellingPoolFor`, not the newest pool, because that is the resolution the coordinator itself
- * makes: where several pools name a resource the earliest one still selling wins. Showing any
- * other pool would put a price and a seat count next to a Pay button that funds a different one.
+ * `sellingPoolFor`, because that is the resolution the coordinator itself makes: where several
+ * pools name a resource, the earliest one still *selling* wins. Showing any other pool would put
+ * a price and a seat count next to a Pay button that funds a different one.
+ *
+ * When none is selling it hands back the newest match instead - a pool to name rather than one
+ * to pay into. The card shows that one with its button disabled and, where several pools name
+ * the resource, a line saying which of them it is.
  */
 async function servicesFor(ctx: DemoContext, cache: PoolStatusCache, now: number) {
   const { cfg } = ctx.coordinator;
   return Promise.all(
     BENCHMARKS.map(async (benchmark) => {
       const resourceUrl = resourceUrlFor(cfg.publicBaseUrl, benchmark.slug);
-      const selling = await cache.advertised(resourceUrl);
+      const { pool, poolCount } = await cache.advertised(resourceUrl);
       return {
         slug: benchmark.slug,
         id: benchmark.id,
@@ -187,28 +209,54 @@ async function servicesFor(ctx: DemoContext, cache: PoolStatusCache, now: number
         unitPrice: benchmark.unitPrice,
         resourceUrl,
         thresholds: [benchmark.minimumContributors, benchmark.minimumContributors + 1],
-        pool: selling ? poolCard(selling.terms, selling.state, selling.reason, now) : undefined,
+        pool: pool ? poolCard(pool, now) : undefined,
+        /**
+         * How many pools have ever named this resource, so the page can say which one it shows.
+         *
+         * The card names a pool id and offers no way to reach any other, which reads as though
+         * the rest were missing. They are not: a buyer picks a service and the coordinator
+         * resolves the pool, and this is the page admitting there were others rather than
+         * quietly implying there were not.
+         */
+        poolCount,
       };
     }),
   );
 }
 
-/** A pool as a buyer is shown it - the six facts a 402 carries, plus the clock. */
-function poolCard(terms: PoolTerms, live: PoolState, reason: string | undefined, now: number) {
+/**
+ * A pool as a buyer is shown it - the six facts a 402 carries, plus the clock.
+ *
+ * Literally the six a 402 carries: `poolSummary` is the coordinator's own `extra`, reused rather
+ * than rewritten, so what the page shows and what the challenge says cannot drift into two
+ * accounts of one pool. Everything added here is presentation the wire has no use for.
+ */
+function poolCard(availability: PoolAvailability, now: number) {
+  const { terms } = availability;
   return {
-    poolId: terms.poolId.toString(),
-    state: live,
+    ...poolSummary(terms, availability.state),
     storedState: terms.state,
-    filled: terms.seats,
-    threshold: terms.threshold,
-    deadline: terms.deadline,
     secondsLeft: Math.max(0, terms.deadline - now),
-    unitTinybars: terms.unitTinybars.toString(),
-    seatHbar: hbarText(terms.unitTinybars),
-    available: reason === undefined,
-    reason,
+    seatHbar: tinybarsToHbar(terms.unitTinybars),
+    available: availability.available,
+    reason: availability.available ? undefined : availability.reason,
   };
 }
+
+/**
+ * How many of this address's deposits the seat list asks the index for, newest first.
+ *
+ * Not a display bound - everything this coordinator sells is rendered. It bounds the *query*,
+ * and `depositsFor`'s default of 25 was low enough to bite silently: a machine that has run
+ * `npm run e2e` a few dozen times holds that many deposits against ephemeral-port coordinators
+ * on its own, and once those fill the window an older seat in a pool this coordinator *does*
+ * sell falls out of it and stops being rendered at all. The count below would then explain a
+ * gap it was itself creating.
+ *
+ * A hundred puts that out of reach for a demo and is still one query. `capped` reports the case
+ * anyway: a bound that is only usually enough is the kind that is wrong on the day.
+ */
+const DEPOSIT_LOOKBACK = 100;
 
 /**
  * A payer's own seats: which pools they are in, and what each one now permits.
@@ -216,6 +264,17 @@ function poolCard(terms: PoolTerms, live: PoolState, reason: string | undefined,
  * The index is asked once for the whole list. Then the chain is asked about only the pools that
  * survive the filter and could still change - a `Released` pool cannot, and neither can one
  * already stamped `Expired`.
+ *
+ * `elsewhere` counts what the filter dropped. Those are real deposits this address really made,
+ * against a coordinator on another base URL - almost always an `npm run e2e` run, which stands a
+ * server up on an ephemeral port and names it in the pools it opens. They cannot be shown here,
+ * because this coordinator would answer 401 for them and a Redeem button beside one would lie.
+ * Saying how many there are is the difference between a filtered list and a list that looks
+ * suspiciously short.
+ *
+ * Deposits, not seats, and the page says so: a refunded deposit gave its seat back, and one that
+ * arrived after the pool filled never took one. Counting them as seats would overstate a number
+ * whose whole job is to account for a gap.
  */
 async function seatsFor(
   ctx: DemoContext,
@@ -223,18 +282,18 @@ async function seatsFor(
   evmAddress: string,
   label: string,
   now: number,
-): Promise<SeatRow[]> {
+): Promise<{ seats: SeatRow[]; elsewhere: number; capped: boolean }> {
   const { cfg } = ctx.coordinator;
   const sells = new Map(
     BENCHMARKS.map((b) => [resourceUrlFor(cfg.publicBaseUrl, b.slug), b.slug] as const),
   );
   const remembered = ctx.memory.forWallet(label);
 
-  let indexed: Awaited<ReturnType<GraphClient["depositsFor"]>>["deposits"] = [];
-  const index = ctx.coordinator.deps.index as GraphClient | undefined;
+  let indexed: IndexedDeposit[] = [];
+  const index = ctx.coordinator.index;
   if (index) {
     try {
-      indexed = (await index.depositsFor(evmAddress)).deposits;
+      indexed = (await index.depositsFor(evmAddress, DEPOSIT_LOOKBACK)).deposits;
     } catch (error) {
       // The index being down must not blank the screen: what this process watched happen is
       // still true, and a payer mid-demo would rather see their seat un-redeemable than gone.
@@ -245,17 +304,20 @@ async function seatsFor(
   const relevant = [...remembered.map((s) => s.pool), ...indexed.map((d) => d.pool)].filter((p) =>
     sells.has(p.resourceUrl),
   );
+  // Only the indexed ones need counting: a remembered seat was watched by this process, so its
+  // pool names this coordinator by construction.
+  const elsewhere = indexed.filter((d) => !sells.has(d.pool.resourceUrl)).length;
   const live = await cache.livePools(relevant);
-  return mergeSeats({ indexed, remembered, sells, live, now });
+  return {
+    seats: mergeSeats({ indexed, remembered, sells, live, now }),
+    elsewhere,
+    capped: indexed.length >= DEPOSIT_LOOKBACK,
+  };
 }
 
 /** Explorer links, added last so nothing above has to carry a network around. */
 function withLinks(network: string, seat: SeatRow) {
-  return {
-    ...seat,
-    seatHbar: hbarText(BigInt(seat.unitTinybars)),
-    transactionUrl: hashscanTransaction(network, seat.transaction),
-  };
+  return { ...seat, transactionUrl: hashscanTransaction(network, seat.transaction) };
 }
 
 // -------------------------------------------------------------------------------------- actions
@@ -351,7 +413,7 @@ async function buy(ctx: DemoContext, body: { wallet: string; slug: string }) {
       const extra = offered.extra as { poolId?: string; threshold?: number; filled?: number };
       ctx.log.response(
         402,
-        `PAYMENT-REQUIRED  scheme=quorum  pool ${extra.poolId}  ${extra.filled ?? "?"}/${extra.threshold} seats  ${hbarText(BigInt(offered.amount))} ℏ`,
+        `PAYMENT-REQUIRED  scheme=quorum  pool ${extra.poolId}  ${extra.filled ?? "?"}/${extra.threshold} seats  ${tinybarsToHbar(BigInt(offered.amount))} ℏ`,
       );
       ctx.log.request(wallet.label, `GET /benchmark/${benchmark.slug}  + PAYMENT-SIGNATURE`);
     }
@@ -402,7 +464,7 @@ async function redeem(
   const { cfg, deps, contractId } = ctx.coordinator;
   const wallet = ctx.wallets.signing(body.wallet);
   const now = Math.floor(Date.now() / 1000);
-  const seats = await seatsFor(ctx, cache, wallet.evmAddress, wallet.label, now);
+  const { seats } = await seatsFor(ctx, cache, wallet.evmAddress, wallet.label, now);
   const seat = seats.find((s) => s.poolId === String(body.poolId));
   if (!seat) throw new Error(`${wallet.label} holds no seat in pool ${body.poolId}`);
 
@@ -451,11 +513,11 @@ async function refund(ctx: DemoContext, body: { wallet: string; poolId: string }
   try {
     ctx.log.chain(`claimRefund(${poolId})  contract ${contractId} - the coordinator is not involved`, wallet.label);
     const claimed = await new PoolsClient(client, ContractId.fromString(contractId)).claimRefund(poolId);
-    ctx.log.chain(`refunded ${hbarText(claimed.tinybars)} ℏ to ${wallet.accountId}`, wallet.label);
+    ctx.log.chain(`refunded ${tinybarsToHbar(claimed.tinybars)} ℏ to ${wallet.accountId}`, wallet.label);
     return {
       poolId: body.poolId,
       tinybars: claimed.tinybars.toString(),
-      hbar: hbarText(claimed.tinybars),
+      hbar: tinybarsToHbar(claimed.tinybars),
       transaction: claimed.transactionId,
       transactionUrl: hashscanTransaction(deps.network, claimed.transactionId),
     };
@@ -479,6 +541,9 @@ async function release(ctx: DemoContext, body: { poolId: string }) {
 
 // -------------------------------------------------------------------------------------- caching
 
+/** What the registry says about one resource: the pool to show, and how many it has had. */
+type Advertised = Awaited<ReturnType<PoolRegistry["advertisedFor"]>>;
+
 /**
  * Chain reads, reused for a poll's worth.
  *
@@ -487,24 +552,62 @@ async function release(ctx: DemoContext, body: { poolId: string }) {
  * `Released` pool cannot change again, and neither can an `Expired` one.
  */
 class PoolStatusCache {
-  private readonly advertisedByUrl = new Map<string, { at: number; value: Advertised | undefined }>();
+  private readonly advertisedByUrl = new Map<string, { at: number; value: Advertised }>();
   private readonly liveById = new Map<string, { at: number; terminal: boolean; value: LivePool }>();
+  // The reads themselves, while they are in flight. A cache that only fills on resolution is
+  // no help to the caller that arrives during the read it would have hit, and those are the
+  // callers there are: one request fans out to every panel on the page at once. Cleared in
+  // `finally`, so a failed read leaves nothing behind for the next one to join.
+  private readonly resolving = new Map<string, Promise<Advertised>>();
+  private readonly reading = new Map<string, Promise<LivePool>>();
 
   constructor(private readonly ctx: DemoContext) {}
 
-  async advertised(resourceUrl: string): Promise<Advertised | undefined> {
+  /**
+   * Which pool a resource is selling, cached for a poll and shared by everything asking at once.
+   *
+   * **A failed read here is not caught, and `live` below catches its own.** The asymmetry is
+   * deliberate and it has a cost worth naming.
+   *
+   * `live` has somewhere to fall back to: a pool it cannot read still has whatever the index
+   * last said about it, and a slightly stale state is a better answer than none. There is no
+   * equivalent second source for *which pool is selling a URL* - that fact exists only in the
+   * registry's scan of the chain, and the previous answer may name a pool that has since filled
+   * or expired. Falling back to it would put a live Pay button on a pool that cannot take one,
+   * which is a worse failure than not drawing the card.
+   *
+   * So the read is allowed to fail, and because `servicesFor` gathers the benchmarks with
+   * `Promise.all`, one benchmark failing fails the whole `/demo/api/state` response rather than
+   * one card. The page keeps its last render and says so after two consecutive failures. The
+   * limitation is that it does not degrade a card at a time: containing it means deciding what
+   * an unreadable card shows, which is a question about the page rather than about this cache.
+   */
+  async advertised(resourceUrl: string): Promise<Advertised> {
     const hit = this.advertisedByUrl.get(resourceUrl);
     if (hit && Date.now() - hit.at < POOL_CACHE_MS) return hit.value;
 
-    const availability = await this.ctx.coordinator.deps.registry.sellingPoolFor(resourceUrl);
-    const value: Advertised | undefined = availability
-      ? {
-          terms: availability.terms,
-          state: availability.state,
-          reason: availability.available ? undefined : availability.reason,
-        }
-      : undefined;
+    let read = this.resolving.get(resourceUrl);
+    if (!read) {
+      read = this.readAdvertised(resourceUrl).finally(() => this.resolving.delete(resourceUrl));
+      this.resolving.set(resourceUrl, read);
+    }
+    return read;
+  }
+
+  private async readAdvertised(resourceUrl: string): Promise<Advertised> {
+    // Kept as the registry returned it. Flattening `available` into "the reason is undefined"
+    // would mean decoding it again at the render site, and a boolean round-tripped through a
+    // string is one more thing that can be got backwards.
+    //
+    // `advertisedFor` rather than `sellingPoolFor` for the count that comes with it: both
+    // answers fall out of one scan, and the page uses the count to say which of a resource's
+    // pools the card is showing.
+    const value = await this.ctx.coordinator.deps.registry.advertisedFor(resourceUrl);
     this.advertisedByUrl.set(resourceUrl, { at: Date.now(), value });
+    // The advertised pool is almost always one a buyer also holds a seat in, and this read
+    // answers the seat list's question too. Recording it here means the pool on screen is read
+    // once per poll rather than once for each panel showing it.
+    if (value.pool) this.remember(value.pool);
     return value;
   }
 
@@ -525,34 +628,41 @@ class PoolStatusCache {
     const hit = this.liveById.get(poolId);
     if (hit && (hit.terminal || Date.now() - hit.at < POOL_CACHE_MS)) return hit.value;
 
+    let read = this.reading.get(poolId);
+    if (!read) {
+      read = this.ctx.coordinator.deps.registry
+        .availability(BigInt(poolId))
+        .then((availability) => this.remember(availability))
+        .finally(() => this.reading.delete(poolId));
+      this.reading.set(poolId, read);
+    }
+
     try {
-      const availability = await this.ctx.coordinator.deps.registry.availability(BigInt(poolId));
-      // The **stored** state, so lazy expiry stays visible: `seats.ts` resolves it against the
-      // deadline, and handing it the already-resolved one would hide the disagreement.
-      const value: LivePool = {
-        state: availability.terms.state,
-        seats: availability.terms.seats,
-      };
-      // Terminal is judged on the **stored** state, not the lazily-resolved one. A pool past its
-      // deadline that nobody has stamped answers `Expired` from `statusOf` while its storage
-      // still says `Open`, and freezing it there would keep reporting it unstamped after a
-      // refund had stamped it. Once storage agrees, nothing can move it again.
-      const terminal =
-        availability.terms.state === "Released" || availability.terms.state === "Expired";
-      this.liveById.set(poolId, { at: Date.now(), terminal, value });
-      return value;
+      return await read;
     } catch (error) {
       // A read that failed is not a fact about the pool. Fall back to whatever the index said.
       console.error(`pool ${poolId} could not be read: ${String(error)}`);
       return hit?.value;
     }
   }
-}
 
-interface Advertised {
-  terms: PoolTerms;
-  state: PoolState;
-  reason?: string;
+  /** File one chain read under its pool id, whichever question prompted it. */
+  private remember(availability: PoolAvailability): LivePool {
+    // The **stored** state, so lazy expiry stays visible: `seats.ts` resolves it against the
+    // deadline, and handing it the already-resolved one would hide the disagreement.
+    const value: LivePool = {
+      state: availability.terms.state,
+      seats: availability.terms.seats,
+    };
+    // Terminal is judged on the **stored** state, not the lazily-resolved one. A pool past its
+    // deadline that nobody has stamped answers `Expired` from `statusOf` while its storage
+    // still says `Open`, and freezing it there would keep reporting it unstamped after a
+    // refund had stamped it. Once storage agrees, nothing can move it again.
+    const terminal =
+      availability.terms.state === "Released" || availability.terms.state === "Expired";
+    this.liveById.set(availability.terms.poolId.toString(), { at: Date.now(), terminal, value });
+    return value;
+  }
 }
 
 /** Mirror-node balances. Free, but shared infrastructure, so not once per second. */
@@ -563,7 +673,7 @@ class BalanceCache {
   constructor(private readonly ctx: DemoContext) {}
 
   async all(): Promise<Map<string, bigint>> {
-    if (Date.now() - this.at < BALANCE_CACHE_MS && this.value.size > 0) return this.value;
+    if (Date.now() - this.at < BALANCE_CACHE_MS) return this.value;
     const { cfg } = this.ctx.coordinator;
     const wallets = this.ctx.wallets.all();
     const balances = await Promise.all(
@@ -618,9 +728,3 @@ function detailOf(body: unknown): string {
   return [error, detail].filter((part) => typeof part === "string").join("  ");
 }
 
-/** Tinybars as HBAR, trimmed. Text throughout, because a float would round a price. */
-function hbarText(tinybars: bigint): string {
-  const whole = tinybars / TINYBARS_PER_HBAR;
-  const fraction = (tinybars % TINYBARS_PER_HBAR).toString().padStart(8, "0").replace(/0+$/, "");
-  return fraction ? `${whole}.${fraction}` : `${whole}`;
-}
