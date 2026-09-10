@@ -174,6 +174,141 @@ pool 25 open on hedera:testnet
 pool exists because the seller put it on the chain; the coordinator has still not been told
 anything, and will find it on its next read.
 
+#### 2 · a buyer asks, and is told the price of a crowd
+
+No key, no clone, no wallet — this one you can run right now:
+
+```bash
+curl -si https://quorum402-coordinator.fly.dev/benchmark/agent-spend-eu
+```
+
+`402 Payment Required`, and the decoded `PAYMENT-REQUIRED` header (the one-liner that decodes it
+is under [The 402 itself](#the-402-itself)) carried, at the time of this run:
+
+```jsonc
+"accepts": [
+  { "scheme": "quorum", "network": "hedera:testnet",
+    "amount": "100000000", "asset": "0.0.0", "payTo": "0.0.10409980",
+    "extra": { "paymentFlow": "conditional", "poolId": "21", "threshold": 3,
+               "filled": 0, "deadline": 1789406664,
+               "binding": { "scheme": "exact", "extra": { "feePayer": "0.0.7162784" } } } },
+  { "scheme": "exact",  "network": "hedera:testnet", /* … the same seat, payable by a client
+                                                        that has never heard of `quorum` */ }
+]
+```
+
+The `error` field alongside it is not an error in the usual sense — it is the offer stated in
+words, because a buyer that pays without reading it has misunderstood what it bought:
+
+> This resource is sold to a group. Payment is held and the resource unlocks only if 3 distinct
+> payers pay before the deadline; if they do not, every payer is refunded and the resource is
+> never served. **Paying does not by itself buy access.**
+
+#### 3–4 · the buyer pays, and the coordinator writes down whose payment it was
+
+One command, because a buyer performs them as one HTTP exchange: it re-requests the resource with
+`PAYMENT-SIGNATURE`, the coordinator runs the ADR 0006 preflight, relays `/verify` and `/settle`,
+and records the deposit before answering.
+
+```bash
+PUBLIC_BASE_URL=https://quorum402-coordinator.fly.dev npm run buy -- agent-spend-eu buyer1
+```
+
+```
+  signed       0.0.7162784@1789059208.972005265
+  answered     202
+```
+
+That transaction id is the payment on Hedera — paste it into
+[HashScan](https://hashscan.io/testnet) and the transfer is there, credited to the contract
+`0.0.10409980` rather than to any person.
+
+#### 5 · two buyers are told to wait, and the third is served
+
+`buyer1` and `buyer2` each got a **202** and a receipt. This is `buyer1`'s, unedited:
+
+```json
+{
+  "poolId": "21",
+  "payer": "0x00000000000000000000000000000000009f39a3",
+  "transaction": "0.0.7162784@1789059208.972005265",
+  "attributed": true, "counted": true,
+  "seat": 1, "threshold": 3, "deadline": 1789406664,
+  "pool": { "state": "Open", "filled": 1 },
+  "next": [
+    { "action": "redeem",  "when": "threshold met",   "header": "QUORUM-RECEIPT" },
+    { "action": "reclaim", "when": "deadline passes", "contract": "0.0.10409980",
+      "method": "claimRefund(uint256)" }
+  ]
+}
+```
+
+**Observe it, between the second and third seat** —
+[pool 21's deposits](https://quorum402-subgraph.fly.dev/subgraphs/name/quorum402/graphql?query=%7B%0A%20%20pool%28id%3A%20%2221%22%29%20%7B%0A%20%20%20%20state%0A%20%20%20%20seats%0A%20%20%20%20threshold%0A%20%20%20%20committedTinybars%0A%20%20%20%20deposits%20%7B%0A%20%20%20%20%20%20hederaTxId%0A%20%20%20%20%20%20payerAddress%0A%20%20%20%20%20%20counted%0A%20%20%20%20%20%20seatsAfter%0A%20%20%20%20%20%20tinybars%0A%20%20%20%20%7D%0A%20%20%7D%0A%7D).
+Three rows now; there were two at that moment, `seats: 2`, `committedTinybars: 200000000`, and
+**three distinct `payerAddress` values** — which is the whole claim the threshold makes, readable
+straight off the index.
+
+`buyer3` ran the identical command and got **200**, with the resource itself rather than a
+receipt:
+
+```json
+{
+  "benchmark": "agent-spend-eu-2026w37",
+  "cut": { "capability": "geocoding", "tier": "batch", "region": "eu-west" },
+  "contributors": 3, "minimumContributors": 3,
+  "unitPrice": { "p25": 0.0009, "p50": 0.0014, "p75": 0.0022, "currency": "USD", "per": "call" },
+  "licensee": "0.0.10434982",
+  "poolId": "21",
+  "settledUnder": "0.0.7162784@1789059251.662920687",
+  "note": "Demonstration data. This build has no contribution channel …"
+}
+```
+
+Same request, same code path, different answer — because the crowd arrived on that one.
+
+#### and then · the seller is paid, by anyone
+
+`release` is not the coordinator's to call, and it was not called by it here either:
+
+```bash
+npm run pool:release -- 21
+```
+
+```
+pool 21 is Met, 3 of 3 seats
+
+  released     0.0.10404217@1789059291.374183706  (50269 gas)
+  contract     600000000 -> 300000000 tinybars
+  recipient    0x00000000000000000000000000000000009F16E9
+  state        Released
+```
+
+(That recipient is not the `seller` account in step 1's output: pool 21 was opened on 2026-09-09
+naming a different one, and a pool's recipient is fixed on-chain when it is created. Pool 25, the
+one open now, pays `0.0.10434989`.)
+
+**Observe the end state** —
+[pool 21, finished](https://quorum402-subgraph.fly.dev/subgraphs/name/quorum402/graphql?query=%7B%0A%20%20pool%28id%3A%20%2221%22%29%20%7B%0A%20%20%20%20state%0A%20%20%20%20seats%0A%20%20%20%20threshold%0A%20%20%20%20releasedTinybars%0A%20%20%20%20committedTinybars%0A%20%20%20%20metAt%0A%20%20%20%20settledAt%0A%20%20%20%20recipient%0A%20%20%7D%0A%7D):
+`state: Released`, `seats: 3`, `releasedTinybars: 300000000` — exactly three seats — and
+`committedTinybars: 0`. The contract kept none of it.
+
+#### 6 · the refund path, which this run did not take
+
+The crowd arrived, so nothing was refunded, and this section will not pretend otherwise. The
+other half runs on demand and is not a hypothetical:
+
+```bash
+npm run e2e -- --scenario missed
+```
+
+Two of three buyers pay, the deadline passes, and both are made whole — one pulling their own
+money back with `claimRefund`, one having it pushed by a bystander with `refundAll`.
+[The crowd falls one seat short](#the-crowd-falls-one-seat-short) below is what that run asserts,
+line by line. It uses ephemeral local pools rather than the hosted coordinator for a reason worth
+stating: a refund scenario needs a pool it is allowed to let expire, and the hosted one is
+deliberately long-lived so that a reader always finds something to pay for.
+
 Four properties of that sequence are load-bearing, and each is somewhere a simpler design would
 have gone wrong.
 
