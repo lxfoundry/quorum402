@@ -52,6 +52,7 @@ was rejected.
 | 2026-09-09 | Receipt redemption (`src/server/redeem.ts`, `src/x402/redemption.ts`, `src/graph/client.ts`) | Wrote §8's canonical message and its verifier, the subgraph client the lookup needs, and the buyer's redemption path; checked every GraphQL query against the live index before building on it | Required that the index resolve only a *position*, with `payer` and `counted` read back from the contract — an indexer must not be able to make a seat valid. Rejected folding two new refusals into §6's catch-all 401, since a payer can act on only one of the three |
 | 2026-09-09 | The refund path, end to end (`scripts/e2e/quorum-missed.ts`, `src/pool/client.ts`) | Found that the contract's two refund methods had no caller anywhere above Solidity, added them to the pool client, and wrote the scenario that drives a pool past its deadline one seat short and refunds both payers on testnet | Chose to spend the remaining build time proving the failure path rather than finishing the README, on the grounds that a demo of an all-or-nothing primitive that only ever shows the *all* has shown the easy half. Called for both of §9's reversal paths in one run rather than the cheaper one, since they exist for different people |
 | 2026-09-09 | The demo UI (`scripts/demo/`, `public/`, `src/hedera/explorer.ts`) | Checked the HashScan link format against the mirror node instead of assuming it, and found the existing one was built on the spelling the API rejects; wrote the control plane, the page, and the seat rules — copied from `_isRefundable` and §8 step 5 rather than reasoned about again — then drove both scenarios against testnet | Asked for a product a buyer could recognise rather than a control panel, and for no text entry anywhere in it. Refused to let the page imply a buyer can pick a pool, since nothing in the `quorum` exchange carries a pool id and every such button but one would be a lie. Ruled out hosting it, because the process holding the buyer keys is not one to publish |
+| 2026-09-10 | The demo page's waits, and the seller's form (`public/`) | Traced a morning of failing Hedera calls to a system clock an hour behind real time, then fixed three things the page did badly once it worked again: nothing marked a wait, the four-second poll rebuilt the seller's half-made form from scratch, and the threshold list ignored which service was selected. Checked the result by loading the real `public/app.js` in a throwaway stubbed DOM and asserting the behaviour, rather than by watching the page | Reported the symptom precisely enough to be diagnosable - the error text, its ten-second cadence, and that it was new that morning. Chose how strong the wait treatment should be, and required it to cover actions and wallet switches rather than only the cold start |
 
 ## 4. What was done without AI
 
@@ -372,6 +373,23 @@ cache was not wrong about the state. It was wrong about the state being **finish
 because the thing still to happen was storage catching up with a fact already true. ADR 0004's
 disagreement is documented in three places in this repository, and it was still read as one value
 rather than two. Only running the refund scenario end to end surfaced it.
+
+**2026-09-10 — explained a ten-second wait from the call graph, an hour after diagnosing its
+actual cause.** The demo page took about ten seconds to show anything, and the plan written to fix
+it opened by explaining why: `/demo/api/state` makes two contract queries per benchmark plus a
+mirror read and a subgraph read, none of them cached on the first call. That is a correct reading
+of the code and it was beside the point. The same session had, an hour earlier, found the
+machine's clock an hour behind real time and shown that every Hedera query was failing precheck
+with `TRANSACTION_EXPIRED`, regenerating the same stale transaction id and burning the SDK's full
+retry budget before giving up. Measured once the clock was fixed, the endpoint answers in 0.4s for
+a seller and 1.8s for a buyer. The ten seconds had already been fixed, and the explanation was of
+something that had stopped happening.
+
+The affordance was built anyway and is worth having — a sleeping Fly.io machine behind the index
+can put the wait back, and a blank column is a bad first frame at any duration. But it rested on
+an account of the latency that a single `curl` refuted, and the evidence against that account was
+already in the conversation that produced it. Reading a call graph yields an explanation shaped
+exactly like a measurement, which is what makes it easy to skip taking one.
 
 ## 6. Review, and what it caught
 
