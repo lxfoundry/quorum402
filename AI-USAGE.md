@@ -54,7 +54,7 @@ was rejected.
 | 2026-09-09 | The demo UI (`scripts/demo/`, `public/`, `src/hedera/explorer.ts`) | Checked the HashScan link format against the mirror node instead of assuming it, and found the existing one was built on the spelling the API rejects; wrote the control plane, the page, and the seat rules — copied from `_isRefundable` and §8 step 5 rather than reasoned about again — then drove both scenarios against testnet | Asked for a product a buyer could recognise rather than a control panel, and for no text entry anywhere in it. Refused to let the page imply a buyer can pick a pool, since nothing in the `quorum` exchange carries a pool id and every such button but one would be a lie. Ruled out hosting it, because the process holding the buyer keys is not one to publish |
 | 2026-09-10 | The demo page's waits, and the seller's form (`public/`) | Traced a morning of failing Hedera calls to a system clock an hour behind real time, then fixed three things the page did badly once it worked again: nothing marked a wait, the four-second poll rebuilt the seller's half-made form from scratch, and the threshold list ignored which service was selected. Checked the result by loading the real `public/app.js` in a throwaway stubbed DOM and asserting the behaviour, rather than by watching the page | Reported the symptom precisely enough to be diagnosable - the error text, its ten-second cadence, and that it was new that morning. Chose how strong the wait treatment should be, and required it to cover actions and wallet switches rather than only the cold start |
 | 2026-09-10 | Reading the demo page, and a fourth buyer (`public/`, `src/server/pools.ts`, `scripts/`) | Diagnosed three unrelated pool ids on one screen by querying the live subgraph for every pool the contract holds, rather than by reading the code - which is what found it, because `sellingPoolFor`'s fallback to the *earliest* matching pool reads as a defensible choice in isolation and only the real data shows it naming a pool released weeks earlier. Then moved seat occupancy onto the card that names the pool, gave the page a product identity, and checked the result by screenshotting the running page in headless Chrome at the video's 720p floor instead of reasoning about the CSS - which is how the sliced log line was found. Wrongly asserted in the plan that the new pool count was free, then found `scan` re-reads `poolCount` on every call and folded both answers into one registry method rather than pay twice | Reported that the page's pool numbering was unreadable, precisely enough to be checkable - which of the three ids appeared where. Chose to fix the crowd strip by deleting it and moving its meaning onto the pool card, over the alternative of a per-buyer subgraph query that would have made its dots true; held the line that the left column must not become a pool picker, since nothing in the `quorum` exchange carries a pool id, and required the page to disclose what it filters instead |
-| 2026-09-10 | Review of the whole branch, and two fixes from it (`public/app.js`) | Reviewed the 25-commit branch in one pass against the specs, then verified both blocking findings against the tree before acting on either - the reports' anchors have been wrong before. Rebuilt the stubbed-DOM check the earlier session threw away, and confirmed each fix by reverting *it alone* and watching its own assertion fail | Asked for the review and chose its scope: both blocking findings and the three stale comments, over the larger option of committing the harness as a suite. Declined nothing on grounds of taste - the cut was time before a freeze, and it is named as that |
+| 2026-09-10 | Review of the whole branch, and two fixes from it (`public/app.js`) | Reviewed the 25-commit branch in one pass against the specs, then verified both blocking findings against the tree before acting on either - the reports' anchors have been wrong before. Rebuilt the stubbed-DOM check the earlier session threw away, and confirmed each fix by reverting *it alone* and watching its own assertion fail | Asked for the review and chose its scope, twice: first the two blocking findings and the three stale comments, then - having seen them land - every remaining Minor as well. Nothing from the review was declined on grounds of taste; the one recommendation still not acted on is named below |
 
 ## 4. What was done without AI
 
@@ -697,3 +697,31 @@ reverted on its own and its own assertion was confirmed to fail, which is how th
 to be detached exactly twice by two polls. Then it was thrown away a second time, deliberately, as
 a call about the hours left rather than about its value. It is the one recommendation from this
 review that was understood, agreed with, and not acted on.
+
+**The eight Minor findings, and the one that was filed too low.** All eight were acted on after
+the two blocking ones. Six were what they looked like — a registry method handing out the array it
+indexes with, a page that wrote failed polls to a console nobody has open, a `busy` class that only
+a *working* script could remove, a service card drawing the crowd without marking the reader in it,
+and two sentences describing the code beside them.
+
+The seventh was not. `seatsElsewhere` was filed as wording: a count of deposits presented as a
+count of seats, capped at the index query's default of 25 and so a floor rather than a total.
+Reading the call site showed the same 25 governs `indexed`, which is what the *rendered* seat list
+is built from — so an address holding more than 25 deposits does not merely get an understated
+footnote, it gets a real seat in a pool this coordinator sells dropped from the page, while a note
+underneath explains a gap the query itself created. Ephemeral-port deposits from repeated
+`npm run e2e` runs are exactly what fills that window, on exactly the machine the demo is recorded
+from. It is now bounded at 100, and saturation is reported rather than assumed away.
+
+Worth recording because it runs the other way from everything else in this file. §5's pattern is
+reviewers arguing confidently for changes that should not be made; this was a reviewer describing
+a real defect in terms milder than it deserved, and only checking the finding against the code
+rather than against the report turned up the rest of it. A report's severity is a claim like any
+other in it.
+
+**The harness, a third time.** It was rebuilt again for these, and now pins five behaviours across
+six commits — each confirmed by reverting one fix alone and watching its own assertion fail, which
+is how the seller's form was found to be detached exactly twice by two polls, and how the crowd
+dots were confirmed to read `taken / taken+mine / empty` rather than merely to have changed. It
+is still not committed. That remains a decision about the hours left rather than about its worth,
+and it is still the one recommendation from this review understood, agreed with, and not acted on.
