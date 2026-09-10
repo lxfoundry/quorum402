@@ -179,13 +179,29 @@ describe("pool registry", () => {
       assert.equal(selling?.terms.poolId, 1n, "pool 0 is closed, so pool 1 sells");
     });
 
-    it("reports the earliest match when none of them can sell", async () => {
+    it("reports the most recent match when none of them can sell", async () => {
       // The caller needs this to tell 404 from a closed pool, which `undefined` cannot say.
+      // The newest of them, because that is the pool a payer was last advertised and the only
+      // one whose `reason` is still about something they saw.
       const { registry } = registryOver([terms(0n), terms(1n)], ["Met", "Expired"]);
 
       const selling = await registry.sellingPoolFor(RESOURCE);
       assert.equal(selling?.available, false);
-      assert.equal(selling?.terms.poolId, 0n);
+      assert.equal(selling?.terms.poolId, 1n);
+    });
+
+    it("walks past every closed pool to reach the newest", async () => {
+      // Three rather than two: with a pair, "the newest" and "not the first" are the same
+      // assertion, and a fallback that kept the second pool it saw would pass either way.
+      const { registry } = registryOver([terms(0n), terms(1n), terms(2n)], [
+        "Released",
+        "Met",
+        "Expired",
+      ]);
+
+      const selling = await registry.sellingPoolFor(RESOURCE);
+      assert.equal(selling?.available, false);
+      assert.equal(selling?.terms.poolId, 2n);
     });
   });
 });

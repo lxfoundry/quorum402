@@ -94,19 +94,29 @@ export class PoolRegistry {
    *
    * Where several pools name the URL, the earliest one that is still selling wins - so a
    * second pool created over the same resource takes over only once the first stops, and the
-   * choice does not depend on when the question is asked.
+   * choice does not depend on when the question is asked. Where *none* of them is selling it
+   * hands back the newest, which is not a pool to pay into but is the one worth reporting.
    */
   async sellingPoolFor(resourceUrl: string): Promise<PoolAvailability | undefined> {
-    let firstSeen: PoolAvailability | undefined;
+    let latest: PoolAvailability | undefined;
     for (const poolId of await this.poolsFor(resourceUrl)) {
       const availability = await this.availability(poolId);
       if (availability.available) return availability;
-      firstSeen ??= availability;
+      latest = availability;
     }
-    // Nothing is selling. Hand back the earliest match anyway when there was one: the caller
-    // answers 404 for "no pool names this URL" and something else for "this pool is closed",
-    // and it cannot tell those apart from `undefined`.
-    return firstSeen;
+    // Nothing is selling. Hand back the *most recent* match anyway when there was one: the caller
+    // answers 404 for "no pool names this URL" and something else for "this pool is closed", and
+    // it cannot tell those apart from `undefined`.
+    //
+    // The newest rather than the oldest, which is what this returned until 2026-09-10. Both are
+    // correct for the question the caller is asking - is there a pool here at all - and the
+    // newest is the better answer to every question that follows it. It is the pool a payer was
+    // most likely advertised, so the `reason` reported beside a payment that arrived too late
+    // describes the pool they actually saw; and it is the one worth naming on a screen, where the
+    // oldest is typically a pool released weeks ago and reads as though the demo were stuck.
+    //
+    // Free: the loop has already read every pool whenever none of them could sell.
+    return latest;
   }
 
   /** Whether this pool can take a payment now, and if not, why not. */
