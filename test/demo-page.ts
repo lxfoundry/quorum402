@@ -162,6 +162,8 @@ interface Page {
   poll(): void;
   /** Change wallet, as the header's `<select>` does. */
   choose(label: string): void;
+  /** Background the tab, or return to it, as the browser does. */
+  visibility(hidden: boolean): void;
 }
 
 function loadPage(wallet = "buyer1"): Page {
@@ -186,6 +188,8 @@ function loadPage(wallet = "buyer1"): Page {
     return made;
   };
 
+  const listeners = new Map<string, () => void>();
+
   const sandbox: Record<string, unknown> = {
     // The page logs a failed read before signalling it. Failures here are driven deliberately,
     // so the noise is not a result.
@@ -194,6 +198,10 @@ function loadPage(wallet = "buyer1"): Page {
       body,
       getElementById: byId,
       createElement: (tag: string) => new StubNode(tag),
+      // The poll reads this every tick and the page listens for its changes, so both are
+      // modelled. A real `document.hidden` is set by the browser and never by the page.
+      hidden: false,
+      addEventListener: (name: string, fn: () => void) => void listeners.set(name, fn),
     },
     localStorage: {
       getItem: (key: string) => stored.get(key) ?? null,
@@ -250,6 +258,13 @@ function loadPage(wallet = "buyer1"): Page {
       const select = byId("wallet");
       if (!select.onchange) throw new Error("the wallet select has no handler");
       select.onchange({ target: { value: label } });
+    },
+    /** What the browser does when the tab is backgrounded or returned to. */
+    visibility: (hidden: boolean) => {
+      (sandbox.document as { hidden: boolean }).hidden = hidden;
+      const fn = listeners.get("visibilitychange");
+      if (!fn) throw new Error("the page registered no visibilitychange listener");
+      fn();
     },
   };
 }
@@ -426,6 +441,64 @@ describe("the demo page", () => {
       await settled();
 
       assert.equal(page.byId("right").firstChild, form);
+    });
+  });
+
+  describe("polling a tab nobody is looking at", () => {
+    it("makes no read while the tab is hidden", async () => {
+      // Every pool read behind this poll is billed to the operator, and that is the account
+      // `recordDeposit` is paid from - so an idle tab was drawing down the balance the
+      // coordinator needs in order to settle anything (issue #22).
+      const page = await showing([service("alpha")]);
+      const before = page.requests.length;
+
+      page.visibility(true);
+      page.poll();
+      page.poll();
+      await settled();
+
+      assert.equal(page.requests.length, before, "a hidden tab still asked the coordinator");
+    });
+
+    it("reads once on the way back, rather than waiting out the interval", async () => {
+      // Returning to the tab is when the page is most likely to be read, so up to POLL_MS of
+      // visibly stale numbers is the wrong trade for the reads that were just saved.
+      const page = await showing([service("alpha")]);
+      page.visibility(true);
+      const before = page.requests.length;
+
+      page.visibility(false);
+      await settled();
+
+      assert.equal(page.requests.length, before + 1);
+    });
+
+    it("polls again once visible, as it did before", async () => {
+      const page = await showing([service("alpha")]);
+      page.visibility(true);
+      page.visibility(false);
+      page.next().ok(stateFor([service("alpha")]));
+      await settled();
+      const before = page.requests.length;
+
+      page.poll();
+      await settled();
+
+      assert.equal(page.requests.length, before + 1);
+    });
+
+    it("does not read on return while something is already in flight", async () => {
+      // The guard the poll has always had, on the path that did not exist until now: a
+      // visibility change mid-payment would redraw the button being clicked.
+      const page = await showing([service("alpha")]);
+      page.poll();
+      const before = page.requests.length;
+
+      page.visibility(true);
+      page.visibility(false);
+      await settled();
+
+      assert.equal(page.requests.length, before, "returning to the tab read over a read");
     });
   });
 
