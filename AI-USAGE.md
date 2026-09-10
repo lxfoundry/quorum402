@@ -56,6 +56,7 @@ was rejected.
 | 2026-09-10 | The demo page's waits, and the seller's form (`public/`) | Traced a morning of failing Hedera calls to a system clock an hour behind real time, then fixed three things the page did badly once it worked again: nothing marked a wait, the four-second poll rebuilt the seller's half-made form from scratch, and the threshold list ignored which service was selected. Checked the result by loading the real `public/app.js` in a throwaway stubbed DOM and asserting the behaviour, rather than by watching the page | Reported the symptom precisely enough to be diagnosable - the error text, its ten-second cadence, and that it was new that morning. Chose how strong the wait treatment should be, and required it to cover actions and wallet switches rather than only the cold start |
 | 2026-09-10 | Reading the demo page, and a fourth buyer (`public/`, `src/server/pools.ts`, `scripts/`) | Diagnosed three unrelated pool ids on one screen by querying the live subgraph for every pool the contract holds, rather than by reading the code - which is what found it, because `sellingPoolFor`'s fallback to the *earliest* matching pool reads as a defensible choice in isolation and only the real data shows it naming a pool released weeks earlier. Then moved seat occupancy onto the card that names the pool, gave the page a product identity, and checked the result by screenshotting the running page in headless Chrome at the video's 720p floor instead of reasoning about the CSS - which is how the sliced log line was found. Wrongly asserted in the plan that the new pool count was free, then found `scan` re-reads `poolCount` on every call and folded both answers into one registry method rather than pay twice | Reported that the page's pool numbering was unreadable, precisely enough to be checkable - which of the three ids appeared where. Chose to fix the crowd strip by deleting it and moving its meaning onto the pool card, over the alternative of a per-buyer subgraph query that would have made its dots true; held the line that the left column must not become a pool picker, since nothing in the `quorum` exchange carries a pool id, and required the page to disclose what it filters instead |
 | 2026-09-10 | Review of the whole branch, and two fixes from it (`public/app.js`) | Reviewed the 25-commit branch in one pass against the specs, then verified both blocking findings against the tree before acting on either - the reports' anchors have been wrong before. Rebuilt the stubbed-DOM check the earlier session threw away, and confirmed each fix by reverting *it alone* and watching its own assertion fail | Asked for the review and chose its scope, twice: first the two blocking findings and the three stale comments, then - having seen them land - every remaining Minor as well, and finally the test file the reviewer had asked for. Nothing from the review was declined on grounds of taste; the one recommendation not acted on is written into the code that carries it |
+| 2026-09-10 | Making the underfunded coordinator visible, and stopping the demo paying for it (`src/server/index.ts`, `public/app.js`) | Added `/readyz`, which answers whether this coordinator can settle rather than whether the process is up, refusing with the same `coordinator-underfunded` string `preflight` uses and distinguishing a balance it could not read from one that is too low. Then gated the demo's poll on tab visibility. Wrote nine tests and confirmed each set by reverting its own change and watching four of five, then four of four, fail; the fifth pins the property the design rests on - that `/healthz` still answers while the balance read is throwing | Filed [#22](https://github.com/lxfoundry/quorum402/issues/22) with the burn measured off the operator's own transaction history rather than estimated, and drew the line the fix had to respect: the page's read path may go stale, the coordinator's decision path may not. Refunded the operator within minutes of the run finding it empty, and chose to take the orthogonal third option now and leave the mirror-backed reader for after the freeze |
 
 ## 4. What was done without AI
 
@@ -413,6 +414,23 @@ can put the wait back, and a blank column is a bad first frame at any duration. 
 an account of the latency that a single `curl` refuted, and the evidence against that account was
 already in the conversation that produced it. Reading a call graph yields an explanation shaped
 exactly like a measurement, which is what makes it easy to skip taking one.
+
+**2026-09-10 - went to put the readiness check on the liveness probe, which is where it would have
+done the most damage.** The obvious home for "can this coordinator settle?" is `/healthz`, and that
+was the first plan: read the balance there and fail the check when it is below the floor. `fly.toml`
+points its health check at `/healthz` and carries a comment explaining, in advance, exactly why
+that endpoint touches no network - *"a health check that fails on someone else's outage takes the
+service down twice."* Shipped as first drafted, an unreachable mirror node would have made Fly
+replace a machine that was working perfectly, converting a cosmetic blind spot into an outage, and
+converting the endpoint judges hit into the thing most likely to take it down.
+
+The comment saved it, which is the part worth recording. Nothing in the code would have failed;
+tests written against the new behaviour would have passed; the defect only exists in the
+interaction between a health check and a platform that acts on it, and it is invisible until the
+mirror node has a bad afternoon. **The reasoning had already been done and written down at the
+point of decision, by someone anticipating this exact instinct** - which is the argument for
+comments that record a rejected alternative rather than only the chosen one. `/readyz` is a
+separate endpoint because of that paragraph, and nothing routes on it deliberately.
 
 ## 6. Review, and what it caught
 
