@@ -141,8 +141,27 @@ function render() {
   $("left-title").textContent = seller ? "Services on offer" : "Services";
   $("right-title").textContent = seller ? "Sell" : `My seats${state.seats.length ? ` (${state.seats.length})` : ""}`;
   $("services").replaceChildren(...state.services.map((s) => serviceCard(s, seller)));
-  $("right").replaceChildren(...(seller ? sellerPanels() : seatPanels()));
+  setPanels($("right"), seller ? sellerPanels() : seatPanels());
   renderLog();
+}
+
+/**
+ * Put `panels` in `host`, leaving a panel that is already first exactly where it is.
+ *
+ * `replaceChildren` is specified as remove-all-then-insert, so a node that is *already* a child
+ * is detached and re-attached. That drops focus to `<body>` and closes an open `<select>` popup,
+ * which on a four-second poll means a seller reading a dropdown has it shut under them. Caching
+ * the form kept its *selections* across polls; leaving the node in place is the other half, and
+ * without it the fix only looks like it worked. Nothing else on the page is cached, so nothing
+ * else takes this branch.
+ */
+function setPanels(host, panels) {
+  if (!panels.length || host.firstChild !== panels[0]) {
+    host.replaceChildren(...panels);
+    return;
+  }
+  while (host.childNodes.length > 1) host.lastChild.remove();
+  for (const panel of panels.slice(1)) host.append(panel);
 }
 
 function renderWallets() {
