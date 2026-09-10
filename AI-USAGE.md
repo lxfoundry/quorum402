@@ -56,6 +56,8 @@ was rejected.
 | 2026-09-10 | The demo page's waits, and the seller's form (`public/`) | Traced a morning of failing Hedera calls to a system clock an hour behind real time, then fixed three things the page did badly once it worked again: nothing marked a wait, the four-second poll rebuilt the seller's half-made form from scratch, and the threshold list ignored which service was selected. Checked the result by loading the real `public/app.js` in a throwaway stubbed DOM and asserting the behaviour, rather than by watching the page | Reported the symptom precisely enough to be diagnosable - the error text, its ten-second cadence, and that it was new that morning. Chose how strong the wait treatment should be, and required it to cover actions and wallet switches rather than only the cold start |
 | 2026-09-10 | Reading the demo page, and a fourth buyer (`public/`, `src/server/pools.ts`, `scripts/`) | Diagnosed three unrelated pool ids on one screen by querying the live subgraph for every pool the contract holds, rather than by reading the code - which is what found it, because `sellingPoolFor`'s fallback to the *earliest* matching pool reads as a defensible choice in isolation and only the real data shows it naming a pool released weeks earlier. Then moved seat occupancy onto the card that names the pool, gave the page a product identity, and checked the result by screenshotting the running page in headless Chrome at the video's 720p floor instead of reasoning about the CSS - which is how the sliced log line was found. Wrongly asserted in the plan that the new pool count was free, then found `scan` re-reads `poolCount` on every call and folded both answers into one registry method rather than pay twice | Reported that the page's pool numbering was unreadable, precisely enough to be checkable - which of the three ids appeared where. Chose to fix the crowd strip by deleting it and moving its meaning onto the pool card, over the alternative of a per-buyer subgraph query that would have made its dots true; held the line that the left column must not become a pool picker, since nothing in the `quorum` exchange carries a pool id, and required the page to disclose what it filters instead |
 | 2026-09-10 | Review of the whole branch, and two fixes from it (`public/app.js`) | Reviewed the 25-commit branch in one pass against the specs, then verified both blocking findings against the tree before acting on either - the reports' anchors have been wrong before. Rebuilt the stubbed-DOM check the earlier session threw away, and confirmed each fix by reverting *it alone* and watching its own assertion fail | Asked for the review and chose its scope, twice: first the two blocking findings and the three stale comments, then - having seen them land - every remaining Minor as well, and finally the test file the reviewer had asked for. Nothing from the review was declined on grounds of taste; the one recommendation not acted on is written into the code that carries it |
+| 2026-09-10 | The README's mechanism and setup sections (`README.md`) | Wrote the six-step walkthrough and the four load-bearing properties under it, each pointing at the code or the ADR that decided it, and the setup path underneath - then ran that path on a **clean clone of `main`** rather than describing it from this tree: `npm ci`, build, 235 tests, lint, typecheck, and the preflight's own error on an unfilled `.env`. Read every script before documenting its arguments, which is what caught an invented `--account` flag in the by-hand sequence, and read `ci.yml` before claiming CI covered the end-to-end runs, which it does not. The one step it could not finish - the network preflight, which needs a funded operator - was left unfinished rather than routed around when the harness's own guard refused to copy a key into the scratch clone, and the section states that boundary instead of implying the whole path was verified | Merged the two open pull requests, and chose the README over the remaining build options on the grounds that Hedera's track asks for setup and architecture and the page had neither. The clean-clone standard is the repository's own, written into `CLAUDE.md` before this README existed - the verification is answering a requirement set in advance, not one chosen to fit what was convenient to run |
+| 2026-09-10 | Review round on the README, and the live run behind it (`README.md`) | Answered four review comments as four commits: a mermaid sequence diagram of the whole exchange, per-step commands with their real output, and redemption promoted from an aside to step 6. Then ran the primitive end to end against the hosted coordinator to get those outputs - opening the replacement pool **first**, because `advertisedFor` returns the earliest still-selling pool, so pool 25 could only take over once 21 went terminal and the public endpoint never had a window with nothing to sell. Every transcript in the section is from that run; the two steps it did not exercise say so rather than borrowing a plausible output | Reviewed the section and asked for the evidence a reader can check rather than the description they must trust - the command each actor runs, the effect in the index, and a link that answers without a wallet or a clone. Refunded the operator the moment the run found it empty. Chose to defer demo-UI screenshots to the video rather than spend the last build afternoon on stills |
 | 2026-09-10 | Making the underfunded coordinator visible, and stopping the demo paying for it (`src/server/index.ts`, `public/app.js`) | Added `/readyz`, which answers whether this coordinator can settle rather than whether the process is up, refusing with the same `coordinator-underfunded` string `preflight` uses and distinguishing a balance it could not read from one that is too low. Then gated the demo's poll on tab visibility. Wrote nine tests and confirmed each set by reverting its own change and watching four of five, then four of four, fail; the fifth pins the property the design rests on - that `/healthz` still answers while the balance read is throwing | Filed [#22](https://github.com/lxfoundry/quorum402/issues/22) with the burn measured off the operator's own transaction history rather than estimated, and drew the line the fix had to respect: the page's read path may go stale, the coordinator's decision path may not. Refunded the operator within minutes of the run finding it empty, and chose to take the orthogonal third option now and leave the mirror-backed reader for after the freeze |
 
 ## 4. What was done without AI
@@ -414,6 +416,59 @@ can put the wait back, and a blank column is a bad first frame at any duration. 
 an account of the latency that a single `curl` refuted, and the evidence against that account was
 already in the conversation that produced it. Reading a call graph yields an explanation shaped
 exactly like a measurement, which is what makes it easy to skip taking one.
+
+**2026-09-10 - documented a command-line flag that does not exist, in the section whose whole
+purpose is being copied and run.** The by-hand sequence in "Running it" was drafted as
+`npm run buy -- --account buyer1`. The script takes positionals - `npm run buy -- <slug>
+[buyerLabel]` - and would have answered that line with a usage error. It was caught by reading
+`scripts/buy-seat.ts` before the section was spliced in, and the flag came from nowhere: not
+mistranscribed from a terminal, not stale from an earlier interface, invented in the draft because
+it was the shape such a flag usually has.
+
+That is the third defect in three days in the same few blocks of this page, and the first two at
+least had the excuse of having been run somewhere - one was corrupted on its way into the file, the
+other written in GNU spellings on a GNU shell. This one had never been executed at all. What the
+three share is only their location, and that is the finding: a README's code blocks are the one
+part of the page that gets *executed* rather than read, and every safeguard that protects them -
+running the line in a shell, running it out of the file, running it on a second OS - starts by
+assuming the command was real. None of them tests that.
+
+**And the same draft credited CI with work it has never done.** Its closing paragraph said the
+network-dependent steps were "exercised on every commit by `npm run e2e`". CI runs `npm ci`, build,
+lint, typecheck and `npm test`; it holds no keys, spends nothing, and has never run `e2e` - which is
+driven by hand before the merges that claim it. Caught by grepping the workflow before the commit.
+A sentence that attributes your own manual work to automation deserves suspicion on sight: it is a
+claim about a system made from memory of that system, in the one document a judge can refute by
+opening `ci.yml`.
+
+**2026-09-10 - the hosted coordinator spent a day advertising an offer it could not honour.**
+Opening a pool for the walkthrough failed with `INSUFFICIENT_PAYER_BALANCE`, and the account was
+the coordinator's own: 0.0.10404217, down to **0.022 HBAR** against the 5 HBAR floor
+`preflight.ts` requires before it will settle anything. So every payment to the public endpoint
+would have been refused `coordinator-underfunded` - correctly, and before taking money it could not
+record, which is ADR 0006 working exactly as designed.
+
+The design was right and the deployment was still dead, which is the part worth keeping. `/healthz`
+returned 200, because it answers for the process rather than for the account it signs with. `curl`
+returned a real 402 carrying a real pool, real terms and a real deadline, because building that
+offer reads the chain and never asks whether this server can act on it. Both halves reported
+healthy while the only thing the endpoint exists to do was impossible, and **nothing anywhere would
+have said so until a buyer tried and was turned away** - a buyer who would have read the refusal as
+the pool being closed. This is the same shape as the `PUBLIC_BASE_URL` mismatch the README already
+warns about, and it went unnoticed for the same reason: the failure lives between two components
+that are each fine.
+
+It was found by accident, while reaching for something else. The honest reading is that a
+coordinator whose gate is a balance should report that balance where it reports its health, and
+`/healthz` not doing so is a gap this project has not closed - named here rather than quietly
+fixed at the end of a build day.
+
+**And a prediction made from two refusals.** Asked how to run the flow, this session warned the
+user that key-loading scripts "have been blocked by your harness guard twice today, so this may
+fail". They were not blocked, and had never been: the two refusals were of a command copying an
+operator key into a scratch directory and of one running the preflight in a context that printed
+it - both about moving a secret, neither about the scripts. Two data points, one generalisation,
+and a warning that would have talked the user out of the approach that worked.
 
 **2026-09-10 - went to put the readiness check on the liveness probe, which is where it would have
 done the most damage.** The obvious home for "can this coordinator settle?" is `/healthz`, and that
