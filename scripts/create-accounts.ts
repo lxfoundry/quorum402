@@ -74,7 +74,7 @@ function parseArgs(argv: string[]): Args {
   }
   const [first, second] = add ? [undefined, positional[0]] : positional;
 
-  const count = Number(first ?? 3);
+  const count = Number(first ?? 4);
   const hbarEach = Number(second ?? 20);
   if (!add && (!Number.isInteger(count) || count < 1 || count > 10)) {
     throw new Error(`count must be an integer 1-10, got "${first}"`);

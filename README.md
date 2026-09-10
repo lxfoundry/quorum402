@@ -159,12 +159,18 @@ clone, not from a developer's machine.
 
 ## The demo UI
 
-`npm run demo` serves a page that drives the whole primitive in a browser — one seller and three
+`npm run demo` serves a page that drives the whole primitive in a browser — one seller and four
 buyers, a handful of clicks each.
 
 ```bash
-npm run demo          # then open http://localhost:4021/ui
+npm run accounts:create                        # buyer1..buyer4, 20 ℏ each
+npm run accounts:create -- --add seller 20     # the account the payouts go to
+npm run demo                                   # then open http://localhost:4021/ui
 ```
+
+The wallet's **role is its label**: anything starting with `seller` opens pools, everything else
+buys seats. Four buyers rather than three because a pool's threshold may be either, and a crowd
+that cannot reach the larger one is the half of all-or-nothing that is easy to leave untested.
 
 > 🔴 **`npm run demo` is not the process to deploy.** It signs with the buyer keys in
 > `.accounts.json`, so anything that can reach it can spend those accounts — and because a pool
@@ -225,7 +231,9 @@ npm run e2e -- --scenario missed    # just the refund path
 ```
 
 It needs `.env` filled in (including `SUBGRAPH_URL`) and a `.accounts.json` holding at least
-four accounts — `npm run accounts:create -- 4`. The preflight checks every balance first and,
+four accounts — `npm run accounts:create`, which makes that many. The payout goes to a
+`seller`-labelled account when there is one, and to whichever account is spare otherwise; `--recipient`
+names it outright. The preflight checks every balance first and,
 if one is short, prints the account id to paste into
 [the faucet](https://portal.hedera.com/faucet) rather than failing partway through a run.
 
