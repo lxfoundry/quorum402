@@ -45,6 +45,12 @@ let waits = 0;
  */
 let inFlight = 0;
 let latest = 0;
+/**
+ * Reads that have failed since the last one that did not.
+ *
+ * Two in a row is what the strip reacts to, not one - see `.stale` in `index.html` for why.
+ */
+let failures = 0;
 /** The licence a redemption returned, kept per pool so it survives the next poll. */
 const licences = new Map();
 
@@ -79,6 +85,10 @@ async function refresh() {
     const answer = await api(`state${wallet ? `?wallet=${encodeURIComponent(wallet)}` : ""}`, {
       signal: AbortSignal.timeout(POLL_MS * 3),
     });
+    // Before the staleness check below: this read *answered*, and whether its answer is still
+    // wanted says nothing about whether the server is reachable.
+    failures = 0;
+    setStale(false);
     // Overtaken while in flight, so this describes a moment already redrawn - or, after a wallet
     // switch, a wallet the user has left. `render` reads the *current* wallet for the name and
     // balance but takes the seats from `state`, so rendering it would put one buyer's name above
@@ -87,10 +97,24 @@ async function refresh() {
     state = answer;
     render();
   } catch (error) {
+    // A console line is not a signal. Nobody is looking at devtools during a demo, and the page
+    // it leaves behind is the dangerous kind: every number still on screen reads as current.
     console.error(error);
+    failures += 1;
+    if (failures > 1) setStale(true);
   } finally {
     inFlight -= 1;
   }
+}
+
+/** The one thing on the page that is about the page rather than about a pool. */
+function setStale(on) {
+  const strip = $("stale");
+  if (on) {
+    strip.textContent =
+      "Not updating — the last two reads went unanswered. Everything below is as it was; still retrying every four seconds.";
+  }
+  strip.hidden = !on;
 }
 
 /**
@@ -205,6 +229,11 @@ function serviceCard(service, seller) {
     return card;
   }
 
+  // Which dot is yours, when one of them is. The seat card in the right-hand column already
+  // rings it, and `state.seats` carries the seat number this address took in this pool, so the
+  // left column drawing the same crowd *without* the reader in it was the asymmetry - not the
+  // ring. A refunded deposit gave its seat back and is not in this crowd any more.
+  const own = state.seats.find((s) => s.poolId === pool.poolId && !s.refunded);
   card.append(seatDots(pool.filled, pool.threshold));
 
   const facts = el("div", "facts");

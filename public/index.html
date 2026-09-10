@@ -97,6 +97,27 @@
       .balance { font-variant-numeric: tabular-nums; font-weight: 600; transition: opacity 0.15s ease; }
       .account { color: var(--muted); font-size: 14px; }
 
+      /*
+       * Shown only when two reads in a row have failed.
+       *
+       * One failure is a blip the next poll recovers from, and a strip that flickers on those
+       * teaches the reader to ignore it - which costs exactly the case it exists for. Two in a
+       * row is eight seconds of a page that looks live and is not, and every number on it still
+       * reads as current: the seat counts, the balances, the countdown ticking locally off a
+       * deadline nobody has re-read. That is the state worth interrupting for.
+       *
+       * Amber rather than red, and it does not block anything. The page is still true as of the
+       * last good read, which is worth more to someone mid-demo than a modal.
+       */
+      .stale {
+        padding: 10px 22px;
+        background: #fdf3e3;
+        border-bottom: 1px solid var(--expired);
+        color: var(--expired);
+        font-size: 14px;
+        font-weight: 600;
+      }
+
       /* ---------------------------------------------------------------- columns */
 
       main {
@@ -294,6 +315,8 @@
         </div>
       </div>
     </header>
+
+    <div class="stale" id="stale" hidden></div>
 
     <main>
       <section id="col-services">
