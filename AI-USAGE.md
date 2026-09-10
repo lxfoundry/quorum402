@@ -54,7 +54,7 @@ was rejected.
 | 2026-09-09 | The demo UI (`scripts/demo/`, `public/`, `src/hedera/explorer.ts`) | Checked the HashScan link format against the mirror node instead of assuming it, and found the existing one was built on the spelling the API rejects; wrote the control plane, the page, and the seat rules — copied from `_isRefundable` and §8 step 5 rather than reasoned about again — then drove both scenarios against testnet | Asked for a product a buyer could recognise rather than a control panel, and for no text entry anywhere in it. Refused to let the page imply a buyer can pick a pool, since nothing in the `quorum` exchange carries a pool id and every such button but one would be a lie. Ruled out hosting it, because the process holding the buyer keys is not one to publish |
 | 2026-09-10 | The demo page's waits, and the seller's form (`public/`) | Traced a morning of failing Hedera calls to a system clock an hour behind real time, then fixed three things the page did badly once it worked again: nothing marked a wait, the four-second poll rebuilt the seller's half-made form from scratch, and the threshold list ignored which service was selected. Checked the result by loading the real `public/app.js` in a throwaway stubbed DOM and asserting the behaviour, rather than by watching the page | Reported the symptom precisely enough to be diagnosable - the error text, its ten-second cadence, and that it was new that morning. Chose how strong the wait treatment should be, and required it to cover actions and wallet switches rather than only the cold start |
 | 2026-09-10 | Reading the demo page, and a fourth buyer (`public/`, `src/server/pools.ts`, `scripts/`) | Diagnosed three unrelated pool ids on one screen by querying the live subgraph for every pool the contract holds, rather than by reading the code - which is what found it, because `sellingPoolFor`'s fallback to the *earliest* matching pool reads as a defensible choice in isolation and only the real data shows it naming a pool released weeks earlier. Then moved seat occupancy onto the card that names the pool, gave the page a product identity, and checked the result by screenshotting the running page in headless Chrome at the video's 720p floor instead of reasoning about the CSS - which is how the sliced log line was found. Wrongly asserted in the plan that the new pool count was free, then found `scan` re-reads `poolCount` on every call and folded both answers into one registry method rather than pay twice | Reported that the page's pool numbering was unreadable, precisely enough to be checkable - which of the three ids appeared where. Chose to fix the crowd strip by deleting it and moving its meaning onto the pool card, over the alternative of a per-buyer subgraph query that would have made its dots true; held the line that the left column must not become a pool picker, since nothing in the `quorum` exchange carries a pool id, and required the page to disclose what it filters instead |
-| 2026-09-10 | Review of the whole branch, and two fixes from it (`public/app.js`) | Reviewed the 25-commit branch in one pass against the specs, then verified both blocking findings against the tree before acting on either - the reports' anchors have been wrong before. Rebuilt the stubbed-DOM check the earlier session threw away, and confirmed each fix by reverting *it alone* and watching its own assertion fail | Asked for the review and chose its scope, twice: first the two blocking findings and the three stale comments, then - having seen them land - every remaining Minor as well. Nothing from the review was declined on grounds of taste; the one recommendation still not acted on is named below |
+| 2026-09-10 | Review of the whole branch, and two fixes from it (`public/app.js`) | Reviewed the 25-commit branch in one pass against the specs, then verified both blocking findings against the tree before acting on either - the reports' anchors have been wrong before. Rebuilt the stubbed-DOM check the earlier session threw away, and confirmed each fix by reverting *it alone* and watching its own assertion fail | Asked for the review and chose its scope, twice: first the two blocking findings and the three stale comments, then - having seen them land - every remaining Minor as well, and finally the test file the reviewer had asked for. Nothing from the review was declined on grounds of taste; the one recommendation not acted on is written into the code that carries it |
 
 ## 4. What was done without AI
 
@@ -719,9 +719,28 @@ a real defect in terms milder than it deserved, and only checking the finding ag
 rather than against the report turned up the rest of it. A report's severity is a claim like any
 other in it.
 
-**The harness, a third time.** It was rebuilt again for these, and now pins five behaviours across
-six commits — each confirmed by reverting one fix alone and watching its own assertion fail, which
-is how the seller's form was found to be detached exactly twice by two polls, and how the crowd
-dots were confirmed to read `taken / taken+mine / empty` rather than merely to have changed. It
-is still not committed. That remains a decision about the hours left rather than about its worth,
-and it is still the one recommendation from this review understood, agreed with, and not acted on.
+**The harness, and what building it found.** It was rebuilt a third time for these fixes, and
+then committed as `test/demo-page.ts` - eight tests, six of which fail against the branch as it
+stood that morning. `public/app.js` had been unreachable from the suite: a browser file the other
+tests cannot import and the type checker barely reads, holding the wait counter, the guard against
+overlapping reads, the sequence number that orders their answers and the form kept across renders.
+Every defect this round found lived there.
+
+What is worth recording is that **writing the stub found a bug the review had not.** Modelling
+`isConnected` honestly - true only while a node can be reached from `<body>` - made a countdown
+render as an empty span in the harness. That is not a stub artifact. `countdown` ticks once before
+returning its node, at which point the caller has not appended it, so `isConnected` is false for
+every countdown ever built: the first tick painted nothing and scheduled nothing, and no later
+tick existed to fix it. Every service card and every open seat card had carried a blank where the
+deadline goes since the demo UI landed, and the README lists "the deadline counting down" among
+what the page shows.
+
+Nothing could have caught it. It is legal code, the element is genuinely in the DOM, lint and
+`tsc` have no opinion, and the page looks complete unless you know a clock belongs in that row.
+Four review agents, a Copilot pass and a whole-branch review all read past it; so did every person
+who opened the page. It surfaced because a test had to answer a question none of them asked - what
+is in that span - and answering it required modelling the one DOM property the code depends on.
+
+That is the argument for the file, better than the one the reviewer made. A harness is usually
+defended as a net under future changes. This one paid for itself while being written, by forcing
+a claim about the rendered page to be stated precisely enough to be false.
