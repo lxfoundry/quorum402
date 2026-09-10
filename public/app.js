@@ -14,7 +14,14 @@ const POLL_MS = 4000;
 
 let state = null;
 let wallet = localStorage.getItem("quorum402.wallet") || "";
-let busy = false;
+/**
+ * How many waits the user is actually waiting on. Zero means the screen shows what was last
+ * read and may be clicked.
+ *
+ * A counter rather than a flag because they nest: an action's own refresh runs inside the
+ * action's wait, and the page must stay blocked across both.
+ */
+let waits = 0;
 let polling = false;
 /** The licence a redemption returned, kept per pool so it survives the next poll. */
 const licences = new Map();
@@ -61,28 +68,52 @@ async function refresh() {
 }
 
 /**
- * Run an action with its button disabled.
+ * Run something the user is waiting on, with the page saying so.
+ *
+ * One class on <body>; the `waiting` block in `index.html` has the rest and the reasoning. Not
+ * wrapped around the background poll on purpose - that fires every four seconds, and a page
+ * that dimmed each time would spend the demo strobing.
+ */
+async function waitFor(work) {
+  waits += 1;
+  document.body.classList.add("busy");
+  try {
+    return await work();
+  } finally {
+    waits -= 1;
+    if (waits === 0) document.body.classList.remove("busy");
+  }
+}
+
+/**
+ * Run an action, with the page blocked until its result is on screen.
  *
  * Every one of these signs and settles a real transaction, which takes seconds. Without this a
  * second click buys a second seat - and on an account that already holds one, that payment is
  * late by construction and has to be refunded rather than counted.
+ *
+ * The label is the one thing left per-button: `waitFor` says the page is busy, and this says
+ * which of its buttons is the reason. Nothing here touches `disabled` - the guard above already
+ * refuses a second action, and `body.busy` already refuses the click - so the buttons that are
+ * disabled on their own merits stay that way.
+ *
+ * The refresh is inside the wait rather than after it, so the page unblocks when the screen
+ * shows the result, not when the transaction returns.
  */
 async function act(button, work) {
-  if (busy) return;
-  busy = true;
+  if (waits) return;
   const wasLabel = button.textContent;
-  button.disabled = true;
   button.textContent = "working…";
-  try {
-    await work();
-  } catch (error) {
-    window.alert(error.message);
-  } finally {
-    busy = false;
-    button.disabled = false;
-    button.textContent = wasLabel;
-    await refresh();
-  }
+  await waitFor(async () => {
+    try {
+      await work();
+    } catch (error) {
+      window.alert(error.message);
+    } finally {
+      button.textContent = wasLabel;
+      await refresh();
+    }
+  });
 }
 
 // ----------------------------------------------------------------------------------- rendering
@@ -422,11 +453,15 @@ $("wallet").onchange = (event) => {
   wallet = event.target.value;
   localStorage.setItem("quorum402.wallet", wallet);
   licences.clear();
-  refresh();
+  waitFor(refresh);
 };
 
-refresh();
+// The cold start is a wait like any other: two contract reads per benchmark, a mirror read and
+// a subgraph read, none of them cached yet. <body> ships with the class so the cursor is right
+// from the first paint; from here the counter owns it.
+waitFor(refresh);
 setInterval(() => {
-  // Never poll over an action: a refresh mid-payment would redraw the button being clicked.
-  if (!busy) refresh();
+  // Never poll over a wait: a refresh mid-payment would redraw the button being clicked, and one
+  // mid-switch would flick the screen back to the wallet being left.
+  if (!waits) refresh();
 }, POLL_MS);

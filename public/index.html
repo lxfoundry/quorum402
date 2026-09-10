@@ -51,7 +51,7 @@
       .pitch { color: var(--muted); max-width: 62ch; margin-top: 2px; }
       .wallet-pick { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
       .wallet-pick select { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
-      .balance { font-variant-numeric: tabular-nums; font-weight: 600; }
+      .balance { font-variant-numeric: tabular-nums; font-weight: 600; transition: opacity 0.15s ease; }
       .account { color: var(--muted); font-size: 14px; }
 
       /* ---------------------------------------------------------------- columns */
@@ -78,6 +78,7 @@
         border: 1px solid var(--line);
         border-radius: 8px;
         padding: 14px 16px;
+        transition: opacity 0.15s ease;
       }
       .card h3 { margin: 0 0 2px; font-size: 17px; }
       .cut { color: var(--muted); font-size: 14px; }
@@ -129,6 +130,25 @@
       .badge { font-size: 14px; font-weight: 600; color: var(--met); }
       .badge.waiting { color: var(--expired); }
 
+      /* ---------------------------------------------------------------- waiting */
+
+      /*
+       * What a wait looks like: one class on <body>, and the rest is CSS.
+       *
+       * `pointer-events: none` rather than a walk over every control setting `disabled`, because
+       * several of them are legitimately disabled already - a seat The Graph has not indexed, a
+       * pool too near its deadline - and a blanket re-enable on the way out would be wrong for
+       * exactly those. It also drops the cursor through to <body>, so one `cursor` declaration
+       * covers every control without touching one of them.
+       *
+       * Only a wait the user is actually waiting on sets this. The four-second background poll
+       * must not, or the page would dim every four seconds for the length of the demo.
+       */
+      body.busy { cursor: progress; }
+      body.busy main, body.busy .wallet-pick { pointer-events: none; }
+      /* `.card`, not `main`, so the first-load message underneath keeps full contrast. */
+      body.busy .card, body.busy .balance { opacity: 0.55; }
+
       /* ---------------------------------------------------------------- licence */
 
       .quantiles { display: flex; gap: 18px; margin: 10px 0 4px; }
@@ -169,7 +189,7 @@
       .log .s402, .log .s4xx { color: var(--expired); }
     </style>
   </head>
-  <body>
+  <body class="busy">
     <header>
       <div>
         <div class="brand">quorum402</div>
@@ -191,11 +211,15 @@
     <main>
       <section>
         <h2 id="left-title">Services</h2>
-        <div class="scroll" id="services"></div>
+        <div class="scroll" id="services">
+          <div class="empty">Reading the chain — the first load takes a few seconds.</div>
+        </div>
       </section>
       <section>
         <h2 id="right-title">My seats</h2>
-        <div class="scroll" id="right"></div>
+        <div class="scroll" id="right">
+          <div class="empty">Reading the chain — the first load takes a few seconds.</div>
+        </div>
       </section>
     </main>
 
