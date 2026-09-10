@@ -129,7 +129,6 @@ function render() {
   $("right-title").textContent = seller ? "Sell" : `My seats${state.seats.length ? ` (${state.seats.length})` : ""}`;
   $("services").replaceChildren(...state.services.map((s) => serviceCard(s, seller)));
   $("right").replaceChildren(...(seller ? sellerPanels() : seatPanels()));
-  renderCrowd();
   renderLog();
 }
 
@@ -161,11 +160,7 @@ function serviceCard(service, seller) {
     return card;
   }
 
-  const bar = el("div", "bar");
-  const fill = el("span");
-  fill.style.width = `${Math.min(100, (pool.filled / pool.threshold) * 100)}%`;
-  bar.append(fill);
-  card.append(bar);
+  card.append(seatDots(pool.filled, pool.threshold));
 
   const facts = el("div", "facts");
   facts.append(pill(pool.state));
@@ -235,6 +230,7 @@ function seatCard(seat) {
   );
   if (seat.state === "Open") facts.append(countdown(seat));
   card.append(facts);
+  card.append(seatDots(seat.filled, seat.threshold, seat.seat));
 
   // Lazy expiry: worth showing rather than smoothing over. It is the one place the index and the
   // chain legitimately disagree, and the demo is about being able to check things. Only while
@@ -407,24 +403,6 @@ function dropdown(label, options) {
 
 // -------------------------------------------------------------------------------------- footer
 
-function renderCrowd() {
-  const buyers = state.wallets.filter((w) => w.role === "buyer");
-  const pool = state.services.map((s) => s.pool).find((p) => p && p.state !== "Released");
-  // `state.seats` is only ever the selected wallet's, so this is one boolean about one buyer -
-  // the dot lights for whoever is being played, and the others stay dark.
-  const iAmSeated = pool && state.seats.some((s) => s.seat !== null && s.poolId === pool.poolId);
-  $("crowd").replaceChildren(
-    ...buyers.map((buyer) => {
-      const who = el("span", "who");
-      const mine = buyer.label === wallet && iAmSeated;
-      who.append(el("span", `dot${mine ? " seated" : ""}`));
-      who.append(el("span", null, buyer.label));
-      return who;
-    }),
-    el("span", "note", pool ? `pool ${pool.poolId} · ${pool.filled} of ${pool.threshold} seats taken` : "no pool open"),
-  );
-}
-
 function renderLog() {
   $("log").replaceChildren(
     ...state.log.map((entry) => {
@@ -462,6 +440,27 @@ function el(tag, className, children) {
 
 function pill(stateName) {
   return el("span", `pill ${stateName}`, stateName);
+}
+
+/**
+ * The crowd, as one dot per seat: filled for the seats taken, ringed for the payer's own.
+ *
+ * On the card that names the pool, rather than in a strip along the bottom of the page. That
+ * strip had to pick one pool out of several to be about, could not say which it had picked, and
+ * offered no way to pick another - so its number was true of something the reader could not
+ * identify. Here there is nothing to disambiguate: these are the seats of the pool written two
+ * lines above them.
+ *
+ * It replaces a percentage bar, which was the wrong shape for the quantity. A threshold is a
+ * count of *people* - three or four of them - and a bar that reads 75% invites the question the
+ * whole primitive answers with a refund: whether nearly enough is enough.
+ */
+function seatDots(filled, threshold, mine) {
+  const row = el("div", "seats");
+  for (let seat = 1; seat <= threshold; seat++) {
+    row.append(el("span", `dot${seat <= filled ? " taken" : ""}${seat === mine ? " mine" : ""}`));
+  }
+  return row;
 }
 
 /** Ticks locally. A countdown that polled would cost a contract read a second. */

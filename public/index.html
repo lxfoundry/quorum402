@@ -86,8 +86,18 @@
 
       /* ---------------------------------------------------------------- seats */
 
-      .bar { height: 12px; background: #e7e9ee; border-radius: 6px; overflow: hidden; margin: 10px 0 6px; }
-      .bar span { display: block; height: 100%; background: var(--accent); transition: width 0.3s; }
+      /* One dot per seat of the threshold, on the card that names the pool. `.mine` rings the
+         payer's own seat, which is the one fact about a pool that is theirs alone. */
+      .seats { display: flex; flex-wrap: wrap; gap: 7px; margin: 12px 0 8px; }
+      .dot {
+        width: 13px;
+        height: 13px;
+        border-radius: 50%;
+        background: #dcdfe6;
+        transition: background 0.3s;
+      }
+      .dot.taken { background: var(--accent); }
+      .dot.mine { box-shadow: 0 0 0 3px rgba(24, 87, 196, 0.22); }
       .facts { display: flex; gap: 14px; flex-wrap: wrap; align-items: baseline; font-size: 14px; }
       .facts b { font-variant-numeric: tabular-nums; font-size: 16px; }
 
@@ -159,18 +169,6 @@
       /* ---------------------------------------------------------------- footer */
 
       footer { border-top: 1px solid var(--line); background: var(--panel); }
-      .crowd {
-        display: flex;
-        align-items: center;
-        gap: 20px;
-        padding: 9px 22px;
-        border-bottom: 1px solid var(--line);
-        font-size: 14px;
-      }
-      .crowd b { text-transform: uppercase; letter-spacing: 0.08em; font-size: 13px; color: var(--muted); }
-      .who { display: flex; align-items: center; gap: 6px; }
-      .dot { width: 10px; height: 10px; border-radius: 50%; background: #c3c7d0; }
-      .dot.seated { background: var(--met); }
 
       .log {
         height: 104px;
@@ -224,7 +222,6 @@
     </main>
 
     <footer>
-      <div class="crowd"><b>The crowd</b><div id="crowd" class="who"></div></div>
       <div class="log" id="log"></div>
     </footer>
 
