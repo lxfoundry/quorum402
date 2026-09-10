@@ -47,7 +47,7 @@ A seller opens a pool over a resource. Buyers arrive at that resource one at a t
 independently, and no buyer knows about the others — the crowd is assembled by the thing being
 sold, not by anyone organising it.
 
-The whole exchange, before the detail — the six steps below are the six labelled here. The
+The whole exchange, before the detail — the seven steps below are the seven labelled here. The
 protocol-level diagrams, with every refusal and the order it runs in, are
 [§6.2](specs/quorum-scheme.md#62-the-payment-leg-as-built) and
 [§8.1](specs/quorum-scheme.md#81-redemption-as-built); this is the shape they fill in.
@@ -93,7 +93,7 @@ sequenceDiagram
     RS->>P: is that deposit counted, and does it belong to this payer?
     RS-->>B: 200 + the resource
 
-    Note over S,G: or the deadline passes short, and nobody keeps anything
+    Note over S,G: 7 · or the deadline passes short, and nobody keeps anything
     B->>P: claimRefund — the payer's own key, no coordinator involved
     S->>P: release — pays the seller, and anyone may call it
 ```
@@ -126,7 +126,16 @@ sequenceDiagram
    Accepted`, with a receipt naming the seat, the fill and the deadline. Threshold met by *this*
    payment: `200`, with the resource. Every other outcome is in
    [§6](specs/quorum-scheme.md#6-lifecycle).
-6. **If the deadline passes with the pool short, everyone is refunded** — and not by the
+6. **A `202` becomes the resource once the crowd arrives.** The buyers who paid before the
+   threshold was crossed hold a receipt rather than the thing they bought, and nothing was
+   remembered on their behalf — the coordinator keeps no session and no account of who is owed
+   what. A payer signs the [§8](specs/quorum-scheme.md#8-entitlement-and-redemption) canonical
+   message with the account that paid and presents it as `QUORUM-RECEIPT`; the coordinator
+   resolves that settlement through the index, confirms with the contract that the deposit is
+   counted and belongs to that account, and serves the resource. Entitlement is derived from
+   chain state every time it is asked for, which is why a receipt keeps working across restarts,
+   redeployments and a coordinator that has never heard of you.
+7. **If the deadline passes with the pool short, everyone is refunded** — and not by the
    coordinator, which is the point. A payer who can afford the gas calls
    [`claimRefund`](contracts/QuorumPools.sol#L336) with their own key and needs nobody; a payer who
    cannot has [`refundAll`](contracts/QuorumPools.sol#L381) push it to them, called by a bystander
@@ -134,7 +143,7 @@ sequenceDiagram
    HTTP deliberately: the party a payer most needs protection from is the one that failed to sell
    them the thing.
 
-### The same six steps, actually run
+### The same seven steps, actually run
 
 Every command below was run against the hosted coordinator
 <https://quorum402-coordinator.fly.dev> on **2026-09-10**, and every output is what came back —
@@ -142,7 +151,7 @@ nothing here is illustrative. The run filled **pool 21**, which is terminal now,
 answers for it exactly as it did during the run: the links go to the subgraph's own GraphiQL, and
 you can re-run each query yourself without a wallet, a clone, or anything installed.
 
-The endpoint is currently selling **pool 25**, open until 2026-10-10 — the same six steps, still
+The endpoint is currently selling **pool 25**, open until 2026-10-10 — the same seven steps, still
 payable, by anyone with three funded testnet accounts.
 
 #### 1 · the seller opens a pool
@@ -267,6 +276,43 @@ receipt:
 
 Same request, same code path, different answer — because the crowd arrived on that one.
 
+#### 6 · a 202 becomes the resource, through the index
+
+`buyer1` paid first and was told to wait. It holds a settlement id and a private key, and that is
+all it needs — the coordinator remembered nothing about it:
+
+```bash
+PUBLIC_BASE_URL=https://quorum402-coordinator.fly.dev npm run redeem -- agent-spend-eu buyer1
+```
+
+```
+buyer1 redeeming a seat in pool 21
+
+  account      0.0.10434979  0x00000000000000000000000000000000009f39a3
+  settlement   0.0.7162784@1789059208.972005265
+  answered     200
+```
+
+```json
+{
+  "benchmark": "agent-spend-eu-2026w37",
+  "contributors": 3,
+  "licensee": "0.0.10434979",
+  "poolId": "21",
+  "settledUnder": "0.0.7162784@1789059208.972005265"
+}
+```
+
+The `settledUnder` is the same transaction id `buyer1`'s 202 receipt carried three steps earlier,
+and the `licensee` is `buyer1` rather than `buyer3` — the seat is the payer's, and the resource is
+served to whoever proves the payment was theirs.
+
+**This is the step The Graph is load-bearing in.** The transaction id a payment settled under is
+emitted in a log and never stored in contract state, so there is no contract call that answers
+"which deposit is this settlement?" — the coordinator asks the subgraph, and only then asks the
+contract whether that deposit is counted and whose it is. The index is in the request path, not
+beside it; with it unavailable, this request is a `503` rather than a wrong answer.
+
 #### and then · the seller is paid, by anyone
 
 `release` is not the coordinator's to call, and it was not called by it here either:
@@ -293,7 +339,7 @@ one open now, pays `0.0.10434989`.)
 `state: Released`, `seats: 3`, `releasedTinybars: 300000000` — exactly three seats — and
 `committedTinybars: 0`. The contract kept none of it.
 
-#### 6 · the refund path, which this run did not take
+#### 7 · the refund path, which this run did not take
 
 The crowd arrived, so nothing was refunded, and this section will not pretend otherwise. The
 other half runs on demand and is not a hypothetical:
