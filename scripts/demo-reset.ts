@@ -549,17 +549,24 @@ async function main(): Promise<number> {
       }
     }
 
-    report.step("superseding the accounts files");
-    const archive = archiveAccounts(ACCOUNTS_FILE);
-    if (archive) report.ok(`${ACCOUNTS_FILE} -> ${archive}`);
-
     report.step("sweeping");
     let swept = 0n;
     for (const entry of surveyed) swept += await sweepOne(report, cfg, client, operator, entry);
     report.info(`recovered ${hbar(swept)}`);
-    for (const path of args.alsoSweep) {
-      // Archived only once its accounts are drained, and in place, so the working copy it came
-      // from cannot load it again and demo with accounts this run has just emptied.
+
+    // Every accounts file is superseded *after* its accounts are drained, and not before.
+    //
+    // The order is the whole of this phase's correctness. An archive taken first would move
+    // `.accounts.json` out from under `sourcesOf`, which looks for that name and no other - so
+    // a sweep that failed partway through would leave the rest of the balances reachable only
+    // by a caller who knew to point `--also-sweep` at an archive. Re-running is meant to be the
+    // recovery, and it is: the file is still where it was, and an account already swept reads
+    // as empty and is skipped.
+    //
+    // In place, for the `--also-sweep` files, so the working copy one came from cannot load it
+    // again and demo with accounts this run has just emptied.
+    report.step("superseding the accounts files");
+    for (const path of [ACCOUNTS_FILE, ...args.alsoSweep]) {
       const moved = archiveAccounts(path);
       if (moved) report.ok(`${path} -> ${moved}`);
     }
