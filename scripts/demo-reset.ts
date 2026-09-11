@@ -259,6 +259,38 @@ async function findShadows(
 // ----------------------------------------------------------------------------- phase 1: retire
 
 /**
+ * The payers already holding a seat in this pool, lowercased.
+ *
+ * Read off the deposits rather than asked for directly, because `_seatTaken` is private and
+ * has no view - but `counted` on a deposit is the same fact, and it is the fact `claimRefund`
+ * and `redeem` both turn on. One paid query per deposit, on a path that is about to spend a
+ * seat price per seat, so the proportion is right.
+ */
+async function seatedPayers(pools: PoolsClient, poolId: bigint): Promise<Set<string>> {
+  const seated = new Set<string>();
+  const count = await pools.depositCount(poolId);
+  for (let id = 0n; id < count; id++) {
+    const deposit = await pools.depositAt(poolId, id);
+    if (deposit.counted) seated.add(deposit.payer.toLowerCase());
+  }
+  return seated;
+}
+
+/**
+ * Whether a payment took a seat, according to the receipt rather than the status code.
+ *
+ * `null` is the receipt's own third answer and means *unknown*, not false - the attribution
+ * was recovered from the replay guard, which proves the payment landed without saying which
+ * deposit it is. A 200 needs no reading: the coordinator answers it only when this payment
+ * was counted *and* met the threshold.
+ */
+export function tookSeat(result: { status: number; body: unknown }): boolean | null {
+  if (result.status === 200) return true;
+  const counted = (result.body as { counted?: unknown } | null)?.counted;
+  return typeof counted === "boolean" ? counted : null;
+}
+
+/**
  * Stop a pool selling, the only way the contract allows: fill it and pay it out.
  *
  * There is no cancel in `QuorumPools`, deliberately - a seller who could withdraw a pool after
@@ -270,6 +302,13 @@ async function findShadows(
  *
  * Runs before the sweep for that reason: the accounts paying for this are the ones whose funds
  * are being recycled anyway.
+ *
+ * 🔴 A payer who already holds a seat here is not refused, and that is the trap this function
+ * is built around. `recordDeposit` never reverts for a buyer-side reason (ADR 0003), so a
+ * second payment from the same address settles as a *late* deposit - `counted: false`,
+ * refundable, entitling nothing - and the coordinator answers 202 with the receipt saying so.
+ * A leftover pool is usually one an interrupted run filled part-way with exactly these
+ * accounts, so that is the ordinary case here rather than the exotic one.
  */
 async function retire(
   report: Reporter,
@@ -280,12 +319,22 @@ async function retire(
 ): Promise<void> {
   const { terms } = shadow.availability;
   const needed = terms.threshold - terms.seats;
-  const affordable = candidates.filter((c) => c.balanceTinybars >= terms.unitTinybars);
+
+  // Excluded before a payment is built, not discovered from one: paying an account that is
+  // already seated moves the seat count not at all, and leaves a seat price sitting in the
+  // contract as a refund this run will never claim.
+  const seated = await seatedPayers(pools, terms.poolId);
+  const unseated = candidates.filter(
+    (c) => c.addressOnChain && !seated.has(c.addressOnChain.toLowerCase()),
+  );
+  const affordable = unseated.filter((c) => c.balanceTinybars >= terms.unitTinybars);
 
   if (affordable.length < needed) {
+    const held = candidates.length - unseated.length;
     report.bad(
       `pool ${terms.poolId} needs ${needed} more seat(s) at ${tinybarsToHbar(terms.unitTinybars)}` +
-        ` HBAR; ${affordable.length} account(s) can pay that. Left selling.`,
+        ` HBAR; ${affordable.length} account(s) can pay that` +
+        `${held ? ` (${held} already hold a seat here)` : ""}. Left selling.`,
     );
     return;
   }
@@ -294,42 +343,68 @@ async function retire(
   // the client here only carries the network the transaction is frozen against, and giving it
   // the operator's key would suggest the coordinator was somehow party to the payment.
   const client = cfg.network === "testnet" ? Client.forTestnet() : Client.forMainnet();
+  let taken = 0;
   try {
-    for (const buyer of affordable.slice(0, needed)) {
+    for (const buyer of affordable) {
+      if (taken === needed) break;
       const result = await buySeat({
         client,
         resourceUrl: shadow.resourceUrl,
         payerId: buyer.account.accountId,
         payerKey: PrivateKey.fromStringECDSA(buyer.account.privateKey),
       });
-      // 200 filled the pool, 202 took a seat and is waiting. Anything else did not pay, and
-      // pressing on would spend the rest of the accounts against a pool that is not filling.
+      // Anything but 200 or 202 did not pay, and pressing on would spend the rest of the
+      // accounts against a pool that is not filling.
       if (result.status !== 200 && result.status !== 202) {
         report.bad(
-          `pool ${terms.poolId}: ${buyer.account.label} was answered ${result.status}. Left selling.`,
+          `pool ${terms.poolId}: ${buyer.account.label} was answered ${result.status}`,
         );
-        return;
+        break;
       }
-      report.ok(`pool ${terms.poolId}: ${buyer.account.label} took a seat (${result.status})`);
       // The balance this run believes in has to move with the payment, or the sweep will build
       // a transfer for money that is no longer there. Waited for rather than read once: mirror
       // ingestion lags consensus, and a read taken immediately reports the pre-payment figure.
       // The expected amount is exact - a payer sends the seat price and nothing else, because
-      // `extra.feePayer` makes the facilitator responsible for the fee.
+      // `extra.feePayer` makes the facilitator responsible for the fee. True of a late deposit
+      // as much as a counted one: both settle, and only one buys anything.
       buyer.balanceTinybars = await awaitBalance(
         cfg.mirrorUrl,
         buyer.account.accountId,
         buyer.balanceTinybars - terms.unitTinybars,
       );
+
+      const counted = tookSeat(result);
+      if (counted === true) {
+        taken++;
+        report.ok(
+          `pool ${terms.poolId}: ${buyer.account.label} took seat ` +
+            `${terms.seats + taken}/${terms.threshold} (${result.status})`,
+        );
+        continue;
+      }
+      // Paid, took nothing. The pre-filter should have prevented it, so reaching here means
+      // the pool stopped taking seats between the read and the payment - a deadline that
+      // passed, or someone else's payment. Stopping is the point: the next account would pay
+      // into the same closed pool, and the one after that.
+      report.bad(
+        `pool ${terms.poolId}: ${buyer.account.label} paid ${tinybarsToHbar(terms.unitTinybars)}` +
+          ` HBAR and took no seat (counted ${String(counted)}) - refundable with claimRefund.` +
+          ` Stopping here rather than spending the rest the same way`,
+      );
+      break;
     }
   } finally {
     client.close();
   }
 
+  // Asked of the contract rather than inferred from the tally above, and asked however the
+  // loop ended: a pool someone else's payment met is still a pool worth releasing, and a run
+  // that stopped early must not leave a met pool holding its money.
   const state = await pools.statusOf(terms.poolId);
   if (state !== "Met") {
-    // Not a failure: the pool has stopped selling either way, which is what this phase is for.
-    // Releasing is what returns the money, and someone else may already have done it.
+    // Not a failure on its own: the pool has stopped selling either way, which is what this
+    // phase is for. Releasing is what returns the money, and someone else may already have
+    // done it. Still selling is a failure, and the loop above will have said why.
     report.info(`pool ${terms.poolId} is ${state}; nothing to release`);
     return;
   }

@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { describe, it } from "node:test";
 import { archiveAccounts, readAccountsFile, writeAccounts } from "../scripts/accounts.js";
-import { labelsFor, parseArgs } from "../scripts/demo-reset.js";
+import { labelsFor, parseArgs, tookSeat } from "../scripts/demo-reset.js";
 import type { GeneratedAccount } from "../scripts/create-accounts.js";
 
 /** The patterns `.gitignore` uses for these files. An archive has to match one of them. */
@@ -161,6 +161,37 @@ describe("reading the flags", () => {
     assert.throws(() => parseArgs(["--buyers", "99"]), /up to 10/);
     assert.throws(() => parseArgs(["--hbar-each", "-1"]), /positive/);
     assert.throws(() => parseArgs(["--hbar-each", "nope"]), /positive/);
+  });
+});
+
+describe("reading whether a payment took a seat", () => {
+  // The property `--retire` rests on. A payer already holding a seat in the pool is *not*
+  // refused - `recordDeposit` never reverts for a buyer-side reason, so the money settles as a
+  // late deposit and the coordinator answers 202 with a receipt saying `counted: false`. Read
+  // as "202 means a seat", that spends a seat price, moves the seat count not at all, and
+  // leaves the pool selling - which is the one outcome the flag exists to prevent.
+  it("does not mistake a settled late deposit for a seat", () => {
+    assert.equal(tookSeat({ status: 202, body: { counted: false, seat: null } }), false);
+  });
+
+  it("takes a counted 202 at its word", () => {
+    assert.equal(tookSeat({ status: 202, body: { counted: true, seat: 2 } }), true);
+  });
+
+  it("reads a 200 without asking, because it is only answered for a counted payment", () => {
+    // 200 carries the licence with the receipt *nested*, so there is no top-level `counted` to
+    // read - and none is needed: the coordinator answers 200 only when this payment was counted
+    // and met the threshold.
+    assert.equal(tookSeat({ status: 200, body: { licence: {}, receipt: { counted: true } } }), true);
+  });
+
+  it("keeps unknown distinct from false", () => {
+    // `counted: null` is the receipt's third answer: the attribution was recovered from the
+    // replay guard, which proves the payment landed without saying which deposit it is.
+    assert.equal(tookSeat({ status: 202, body: { counted: null } }), null);
+    assert.equal(tookSeat({ status: 202, body: {} }), null);
+    assert.equal(tookSeat({ status: 202, body: null }), null);
+    assert.equal(tookSeat({ status: 202, body: "not json" }), null);
   });
 });
 
