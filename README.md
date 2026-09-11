@@ -722,6 +722,54 @@ the one process. Pointed at a deployed coordinator, the seller opens pools namin
 buyers pay it over the network. The page stays local, and the browser never talks to the
 coordinator directly, so no CORS is involved either way.
 
+### Starting from a clean set of accounts
+
+A demo run leaves things behind, and they are not all the same kind of thing:
+
+| What is left | Where it lives | What clears it |
+|---|---|---|
+| Balances drawn down by seats and gas | the accounts | new accounts, or the faucet |
+| Seats in old pools, still listed | the index, keyed by **payer address** | new accounts |
+| A pool that never filled, still selling | the contract, keyed by **resource URL** | filling it, or its deadline |
+| Log, seat memory, caches | the demo process | restarting it |
+
+`npm run demo:reset` does the first three. It is safe to read first — with no flags it surveys,
+reports, and signs nothing:
+
+```bash
+npm run demo:reset                       # what it would do
+npm run demo:reset -- --yes              # do it
+npm run demo:reset -- --yes --retire     # and stop any pool that is still selling
+```
+
+It sweeps the accounts in `.accounts.json` into the operator, supersedes that file, makes
+`buyer1..buyer4` and `seller` with equal balances, and then checks its own work: that each new
+address is the one the network holds, that the index reports no deposits against it, and that no
+pool would be advertised ahead of the next one opened.
+
+Three things it is careful about, each for a reason that cost something to learn:
+
+- **Nothing is deleted.** A sweep is a transfer, so the account stays alive, and superseding
+  `.accounts.json` renames it to `<timestamp>.accounts.json` beside itself. `claimRefund` pays
+  `msg.sender` and nobody else, so an account whose key has been thrown away is a refund nobody
+  can ever claim. Both `.accounts.json` and `*.accounts.json` are gitignored.
+- **The whole balance moves.** The operator pays the fee for the sweep, so nothing has to be held
+  back to cover one — the difference between recovering a balance and recovering a balance minus
+  a guess.
+- **`--retire` is opt-in and spends real HBAR.** There is no cancel in `QuorumPools`, deliberately:
+  a seller who could withdraw a pool after payers had committed to it is the counterparty risk the
+  threshold exists to remove. So the only way to stop a pool selling before its deadline is to
+  fill it to its threshold and release it, at the seat price per remaining seat. A pool with a
+  short deadline is better waited out.
+
+`--also-sweep <path>` recycles another working copy's accounts file in the same run, and archives
+it in place once its accounts are empty — so a second checkout cannot go on using accounts that
+have been drained.
+
+One cost worth knowing: each invocation reads every pool on the contract to find which of them
+name the resource URLs this coordinator sells, and contract view calls are not free. Expect a few
+HBAR per run, which is why the survey and the work are one command and not two.
+
 ## Verifying it end to end
 
 `npm test` proves the parts: the contract's arithmetic on an in-process EVM, and the scheme's
