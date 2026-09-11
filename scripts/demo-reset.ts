@@ -229,11 +229,20 @@ async function survey(
   return surveyed;
 }
 
-/** Which of our resource URLs already have a pool that would take a payment. */
+/**
+ * Which of our resource URLs already have a pool that would take a payment.
+ *
+ * `sellingIsFailure` decides how a still-selling pool is *reported*, never whether it is found.
+ * The survey runs before this run has touched anything, where a pool already selling is the
+ * thing the run exists to notice. `verify` runs after, where the same pool is a failure only
+ * if `--retire` was asked for and did not manage it - so `verify` passes that answer in, and
+ * is the only caller that ever needs to.
+ */
 async function findShadows(
   report: Reporter,
   cfg: Config,
   registry: PoolRegistry,
+  sellingIsFailure = true,
 ): Promise<Shadow[]> {
   const shadows: Shadow[] = [];
   for (const benchmark of BENCHMARKS) {
@@ -245,11 +254,12 @@ async function findShadows(
     const ever = `${poolCount} pool${poolCount === 1 ? "" : "s"} ever`;
     if (pool?.available) {
       shadows.push({ slug: benchmark.slug, resourceUrl, availability: pool });
-      report.bad(
+      const selling =
         `${benchmark.slug.padEnd(20)} pool ${pool.terms.poolId} is selling ` +
-          `(${pool.terms.seats}/${pool.terms.threshold} seats at ` +
-          `${tinybarsToHbar(pool.terms.unitTinybars)} HBAR) - ${ever}`,
-      );
+        `(${pool.terms.seats}/${pool.terms.threshold} seats at ` +
+        `${tinybarsToHbar(pool.terms.unitTinybars)} HBAR) - ${ever}`;
+      if (sellingIsFailure) report.bad(selling);
+      else report.info(selling);
     } else if (pool) {
       report.ok(
         `${benchmark.slug.padEnd(20)} nothing selling; newest is pool ${pool.terms.poolId}, ` +
@@ -617,14 +627,16 @@ async function verify(
     );
   }
 
-  const shadows = await findShadows(report, cfg, registry);
+  const shadows = await findShadows(report, cfg, registry, retiring);
   if (shadows.length === 0) {
     report.ok(
       "no pool is selling either resource - the next pool opened will be the one advertised",
     );
   } else if (retiring) {
-    // Asked to stop them and they are still selling: this run did not do what it was told.
-    report.bad(
+    // Asked to stop them and they are still selling: this run did not do what it was told, and
+    // `findShadows` has already counted one failure per pool that names which. Counting again
+    // here would report two failures for one leftover pool.
+    report.info(
       `${shadows.length} pool(s) still selling after --retire; a pool opened now would not be` +
         ` advertised`,
     );
@@ -632,7 +644,7 @@ async function verify(
     // Not asked to stop them, so this is a fact about the world rather than a failure of the
     // run - and the README recommends waiting a short-deadline pool out rather than paying to
     // fill it. Exiting 1 for a state the caller declined to change would make the honest
-    // choice look like a broken reset.
+    // choice look like a broken reset, which is why `findShadows` was told the same thing.
     report.info(
       `${shadows.length} pool(s) still selling; a pool opened now would not be advertised.` +
         ` Wait for the deadline, or re-run with --retire`,
