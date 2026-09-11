@@ -1,7 +1,7 @@
 /**
  * Recycle the demo's throwaway accounts and hand back a set that has never done anything.
  *
- * Run: npm run demo:reset                 # says what it would do, signs nothing
+ * Run: npm run demo:reset                 # says what it would do, changes nothing
  *      npm run demo:reset -- --yes        # does it
  *
  * The demo UI shows four things, and only some of them are about accounts:
@@ -526,7 +526,15 @@ async function main(): Promise<number> {
     );
 
     if (!args.yes) {
-      console.log("\n  dry run - nothing was signed. Re-run with --yes to execute.\n");
+      // Not "nothing was signed", which is false and false in the direction that costs money:
+      // finding which pools name these resource URLs reads every pool off the contract, and a
+      // `ContractCallQuery` is paid for by the operator. What this run has not done is change
+      // anything - no account swept, created or emptied, no pool filled.
+      console.log(
+        "\n  dry run - nothing was changed. The pool reads above are paid contract queries," +
+          "\n  so this run still cost the operator a few HBAR in query fees." +
+          "\n  Re-run with --yes to execute.\n",
+      );
       // Zero regardless of what was found. Everything above describes the world as it is, and
       // a shadowing pool or a stale address is this script's *subject*, not a failure of it -
       // exiting non-zero for finding the thing it was asked to look for would make the dry run
