@@ -456,6 +456,9 @@ async function retire(
  * transaction - it is the client's operator, so the transaction id belongs to it. That is the
  * difference between recovering a balance and recovering a balance minus whatever guess was
  * made about the fee, and it is why this is a transfer rather than an account deletion.
+ *
+ * Returns what was moved, and whether this account is still holding a balance the caller will
+ * have to say how to reach - the archive is about to move its key out from under a plain re-run.
  */
 async function sweepOne(
   report: Reporter,
@@ -463,11 +466,12 @@ async function sweepOne(
   client: Client,
   operator: AccountId,
   entry: Surveyed,
-): Promise<bigint> {
+): Promise<{ swept: bigint; unswept: boolean }> {
+  const nothing = { swept: 0n, unswept: false };
   const { account } = entry;
   if (account.accountId === cfg.operatorId) {
     report.info(`${account.label.padEnd(8)} ${account.accountId} is the operator - skipped`);
-    return 0n;
+    return nothing;
   }
   if (entry.problem) {
     // Reported, not failed. The survey already counted this one - before the baseline was
@@ -475,7 +479,7 @@ async function sweepOne(
     // run *found*, not something it did. Counting it again here would make a reset that
     // behaved perfectly exit 1 for a condition it inherited.
     report.info(`${account.label.padEnd(8)} ${account.accountId} skipped: ${entry.problem}`);
-    return 0n;
+    return nothing;
   }
 
   // Twice at most. The amount has to be exactly what the account holds - there is no "send
@@ -487,7 +491,7 @@ async function sweepOne(
     const balance = await balanceTinybars(cfg.mirrorUrl, account.accountId);
     if (balance === 0n) {
       report.info(`${account.label.padEnd(8)} ${account.accountId} is empty - nothing to sweep`);
-      return 0n;
+      return nothing;
     }
     try {
       const signed = await new TransferTransaction()
@@ -505,19 +509,20 @@ async function sweepOne(
         `${account.label.padEnd(8)} ${account.accountId.padEnd(14)} swept ${hbar(balance)}` +
           ` (${receipt.status.toString()})`,
       );
-      return balance;
+      return { swept: balance, unswept: false };
     } catch (error) {
       failure = (error as Error).message;
       if (attempt === 1) await new Promise((r) => setTimeout(r, 2_000));
     }
   }
 
-  // One account that cannot be swept must not strand the rest - and the archive still holds its
-  // key, so this is recoverable by hand later.
+  // One account that cannot be swept must not strand the rest. The key is safe - the archive
+  // keeps it - but it is about to stop being where `sourcesOf` looks, so the caller names the
+  // command that reaches it once the archive path is known.
   report.bad(
     `${account.label.padEnd(8)} ${account.accountId.padEnd(14)} could not be swept: ${failure}`,
   );
-  return 0n;
+  return { swept: 0n, unswept: true };
 }
 
 // ----------------------------------------------------------------------------- phase 5: verify
@@ -742,7 +747,12 @@ async function main(): Promise<number> {
 
     report.step("sweeping");
     let swept = 0n;
-    for (const entry of surveyed) swept += await sweepOne(report, cfg, client, operator, entry);
+    const unswept: Surveyed[] = [];
+    for (const entry of surveyed) {
+      const result = await sweepOne(report, cfg, client, operator, entry);
+      swept += result.swept;
+      if (result.unswept) unswept.push(entry);
+    }
     report.info(`recovered ${hbar(swept)}`);
 
     // Every accounts file is superseded *after* its accounts are drained, and not before.
@@ -757,9 +767,24 @@ async function main(): Promise<number> {
     // In place, for the `--also-sweep` files, so the working copy one came from cannot load it
     // again and demo with accounts this run has just emptied.
     report.step("superseding the accounts files");
+    const archives = new Map<string, string>();
     for (const path of [ACCOUNTS_FILE, ...args.alsoSweep]) {
       const moved = archiveAccounts(path);
-      if (moved) report.ok(`${path} -> ${moved}`);
+      if (moved) {
+        archives.set(path, moved);
+        report.ok(`${path} -> ${moved}`);
+      }
+    }
+    // An account that could not be swept still holds its balance, and its key has just moved to
+    // the archive - which `sourcesOf` does not look at, by design. So a plain re-run, the
+    // recovery this script otherwise offers, will not find it. "Recoverable by hand later" is
+    // true and useless; this is the command.
+    for (const entry of unswept) {
+      const where = archives.get(entry.source) ?? entry.source;
+      report.info(
+        `${entry.account.label.padEnd(8)} still holds ${hbar(entry.balanceTinybars)} - recover` +
+          ` with: npm run demo:reset -- --yes --also-sweep ${where}`,
+      );
     }
 
     report.step("creating");
