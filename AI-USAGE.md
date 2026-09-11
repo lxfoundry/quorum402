@@ -60,6 +60,10 @@ was rejected.
 | 2026-09-10 | Review round on the README, and the live run behind it (`README.md`) | Answered four review comments as four commits: a mermaid sequence diagram of the whole exchange, per-step commands with their real output, and redemption promoted from an aside to step 6. Then ran the primitive end to end against the hosted coordinator to get those outputs - opening the replacement pool **first**, because `advertisedFor` returns the earliest still-selling pool, so pool 25 could only take over once 21 went terminal and the public endpoint never had a window with nothing to sell. Every transcript in the section is from that run; the two steps it did not exercise say so rather than borrowing a plausible output | Reviewed the section and asked for the evidence a reader can check rather than the description they must trust - the command each actor runs, the effect in the index, and a link that answers without a wallet or a clone. Refunded the operator the moment the run found it empty. Chose to defer demo-UI screenshots to the video rather than spend the last build afternoon on stills |
 | 2026-09-10 | Making the underfunded coordinator visible, and stopping the demo paying for it (`src/server/index.ts`, `public/app.js`) | Added `/readyz`, which answers whether this coordinator can settle rather than whether the process is up, refusing with the same `coordinator-underfunded` string `preflight` uses and distinguishing a balance it could not read from one that is too low. Then gated the demo's poll on tab visibility. Wrote nine tests and confirmed each set by reverting its own change and watching four of five, then four of four, fail; the fifth pins the property the design rests on - that `/healthz` still answers while the balance read is throwing | Filed [#22](https://github.com/lxfoundry/quorum402/issues/22) with the burn measured off the operator's own transaction history rather than estimated, and drew the line the fix had to respect: the page's read path may go stale, the coordinator's decision path may not. Refunded the operator within minutes of the run finding it empty, and chose to take the orthogonal third option now and leave the mirror-backed reader for after the freeze |
 
+| 2026-09-11 | Resetting the demo's accounts (`scripts/demo-reset.ts`, `scripts/accounts.ts`, `scripts/create-accounts.ts`) | Surveyed the live chain before writing anything, which is what set the design: an accounts file on disk recorded the *key-derived* EVM address rather than the long-zero one the network holds, so every index lookup for those accounts returns nothing and their seats never list — the defect `create-accounts.ts` documents as fixed, in a file written the day before the fix. Built the shadow check on `PoolRegistry` rather than reimplementing it, so what the script reports is what a 402 would actually advertise, and found a pool still selling a month out. Then broke the tree: extracting `createAccounts` left `main()` running on import, so the new script's flags were parsed by the old script's argument parser and refused. Caught by running it, not by reading it | Asked for a scripted reset rather than a checklist, and for it to be safe to run twice. Chose to sweep rather than delete — an account without its key is a refund nobody can claim, since `claimRefund` pays `msg.sender` and nobody else — and to have the fee fall on the operator, so the whole balance moves instead of a balance minus a guess. Ruled `--retire` opt-in, on the grounds that filling someone's pool to silence it is a thing to be asked for rather than assumed |
+
+| 2026-09-11 | Reviewing the reset before it merged (`scripts/demo-reset.ts`, `scripts/accounts.ts`, `test/demo-reset.ts`, `README.md`) | A second session reviewed the eight commits against the requirements and the surrounding code, without the conversation that wrote them: one Critical, four Important, six Minor. The Critical was `--retire` counting an HTTP 202 as a seat, when a payer already holding a seat in that pool settles as a *late* deposit the receipt marks `counted: false` — so the flag could spend a seat price, leave the pool selling, and report success. Verified against `_lateness`, the server's status selection and the buyer's return shape before being acted on; the same reading produced the fix, since `counted` was already on the wire. Three of the four Important findings turned out to be one defect in three places: a `throw` escaping a phase built to report and continue | Asked for the whole list to be worked rather than only the Critical, on a freeze morning, on the grounds that a tool which moves real funds and handles keys is a bad place to carry known defects. Chose to pre-filter seated accounts as well as read the receipt — the receipt check alone would have stopped the false report, but still paid for the deposit that taught it |
+
 ## 4. What was done without AI
 
 The design. Every ADR in `specs/adr/` records a decision that was made before anything was
@@ -487,6 +491,25 @@ point of decision, by someone anticipating this exact instinct** - which is the 
 comments that record a rejected alternative rather than only the chosen one. `/readyz` is a
 separate endpoint because of that paragraph, and nothing routes on it deliberately.
 
+**2026-09-11 - read an HTTP status as the answer to a question the body answers.** `--retire`
+stops a leftover pool selling by buying its remaining seats, and counted any `200` or `202` as a
+seat taken. A payer who already holds a seat in that pool is not refused, though: `recordDeposit`
+never reverts for a buyer-side reason (ADR 0003), so the payment settles as a *late* deposit -
+`counted: false`, refundable, entitling nothing - and the coordinator answers 202 with the receipt
+that says exactly that. This project's own receipt, carrying its own `counted` field, being
+ignored in favour of the status code it was written to disambiguate.
+
+What makes it worth recording is that the failing case is the *ordinary* one. A leftover selling
+pool is almost always one an interrupted run filled part-way, using the accounts still sitting in
+`.accounts.json` - the same accounts `--retire` then reaches for first. So the flag would print
+"took a seat (202)", move the seat count not at all, find the pool still Open, print "nothing to
+release", exit 0, and leave a seat price of HBAR in the contract as a refund the run would never
+claim. Every line of that log is true and the whole of it is wrong.
+
+Nothing in the code reads as a mistake, which is why it survived writing and a first review
+round. It was caught by a reviewer that went and read `_lateness` in the contract instead of
+trusting the comment above the check.
+
 ## 6. Review, and what it caught
 
 The contract was reviewed by a second Claude Code session given only the diff, the spec and
@@ -838,3 +861,55 @@ is in that span - and answering it required modelling the one DOM property the c
 That is the argument for the file, better than the one the reviewer made. A harness is usually
 defended as a net under future changes. This one paid for itself while being written, by forcing
 a claim about the rendered page to be stated precisely enough to be false.
+
+### A test that found the bug it was written to prevent, 2026-09-11
+
+`demo-reset` supersedes an accounts file by renaming it to `<timestamp>.accounts.json` rather than
+deleting it, because those files hold the only copies of keys to accounts that may still be owed a
+refund. The timestamp is second-resolution. The test written to pin the *gitignore* property —
+that an archive's name stays inside `.accounts.json` / `*.accounts.json`, so a file of private keys
+cannot end up untracked-but-not-ignored in a public repository — was cheap to extend to a second
+case, and that one failed: two resets in the same second produce the same name, `renameSync`
+overwrites without a word, and the first archive's keys are destroyed **by the act meant to
+preserve them**.
+
+Nothing in review would have found it. The code is four lines, it reads correctly, and the failure
+needs two invocations inside one second to appear — which the documented usage makes likely rather
+than exotic, since the tool is meant to be run, inspected, and run again.
+
+It is the same shape as the countdown bug in the entry above, and worth recording for the same
+reason: both surfaced because a test had to state a claim precisely enough to be false. "Archives
+the old file" is not falsifiable. "Two archives made in the same second are two files, and the
+first still holds what it held" is, and it was.
+
+### The reset reviewed before it merged, 2026-09-11
+
+The eight commits behind `demo:reset` were reviewed by a session given the diff, the requirements
+and the surrounding code — not the conversation that produced them — and told where the seats had
+already been spent, since four of those commits were themselves answers to a first review round.
+It returned one Critical finding, four Important and six Minor, and the Critical one is the entry
+above: a seat counted from an HTTP status rather than from the receipt's `counted` field.
+
+Two things about the round are worth keeping.
+
+**The Critical finding was verified before it was acted on, and the verification is what made it
+actionable.** A review that says "this could settle as a late deposit" is a claim about three
+files at once — the contract's `_lateness`, the server's status selection, and the buyer's return
+shape. Reading all three turned it from a plausible objection into a known sequence with a known
+cost, and the same reading produced the fix: `counted` is already on the wire, in the body the
+buyer already parses. The finding named a defect; checking it named the repair.
+
+**Three of the four Important findings were the same defect wearing different clothes.** A
+`throw` escaping a phase that was otherwise built to report a failure and carry on — `retire`
+when no coordinator is answering, `verify` when the mirror node has not ingested an account that
+was created a second earlier, and a pre-existing condition counted against the run that found it.
+Each on its own reads as error-handling polish. Together they say something specific about the
+script: it has a `Reporter` and a rule about what its exit code means, and three separate places
+quietly opted out of both. That is the kind of pattern a reviewer sees and an author, having
+written each one for its own good local reason, does not.
+
+Which is roughly the complement of the entry above it. A test caught the archive collision that
+no amount of reading would have found; review caught the seat-counting bug that no test had been
+written to look for, because the property it violates — "a seat is a thing the contract agrees
+happened" — was never stated anywhere the code could be measured against. It is now, in
+`tookSeat`, and pinned by four cases including the one that was wrong.

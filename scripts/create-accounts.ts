@@ -10,7 +10,8 @@
  * Run: npm run accounts:create -- [count] [hbarEach]     # first time, writes the file
  *      npm run accounts:create -- --add <label> [hbarEach]  # append one, keeping the rest
  */
-import { writeFileSync, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import {
   AccountCreateTransaction,
   AccountId,
@@ -19,9 +20,9 @@ import {
   PrivateKey,
 } from "@hiero-ledger/sdk";
 import { loadConfig } from "../src/config.js";
-import { loadAccounts } from "./accounts.js";
+import { ACCOUNTS_FILE, loadAccounts, writeAccounts } from "./accounts.js";
 
-const OUT = ".accounts.json";
+const OUT = ACCOUNTS_FILE;
 
 export interface GeneratedAccount {
   label: string;
@@ -85,6 +86,54 @@ function parseArgs(argv: string[]): Args {
   return { add, count, hbarEach };
 }
 
+/**
+ * Create one throwaway account per label, funded with `hbarEach`.
+ *
+ * `onCreated` fires per account rather than the whole list being returned at the end, and that
+ * is load-bearing rather than a convenience: these accounts hold real testnet funds the moment
+ * they exist, so a failure on the fourth must not lose the keys to the first three. A caller
+ * that persists from the callback keeps everything that was made; one that waits for the return
+ * value keeps nothing when this throws.
+ *
+ * The client's operator pays for the creations and funds the initial balances.
+ */
+export async function createAccounts(params: {
+  client: Client;
+  labels: string[];
+  hbarEach: number;
+  onCreated?: (account: GeneratedAccount) => void;
+}): Promise<GeneratedAccount[]> {
+  const created: GeneratedAccount[] = [];
+  for (const label of params.labels) {
+    const key = PrivateKey.generateECDSA();
+
+    const receipt = await (
+      await new AccountCreateTransaction()
+        // No EVM alias, so the account's address is the long-zero form of its number. That
+        // is what `evmAddress` records and what these accounts sign contract calls as.
+        .setKeyWithoutAlias(key.publicKey)
+        .setInitialBalance(new Hbar(params.hbarEach))
+        // Unlimited auto-association: lets these accounts receive HTS tokens without an
+        // explicit association step, which is what makes a USDC path viable later.
+        .setMaxAutomaticTokenAssociations(-1)
+        .execute(params.client)
+    ).getReceipt(params.client);
+
+    const accountId = receipt.accountId;
+    if (!accountId) throw new Error(`account creation for ${label} returned no accountId`);
+
+    const account: GeneratedAccount = {
+      label,
+      accountId: accountId.toString(),
+      privateKey: key.toStringRaw(),
+      evmAddress: `0x${accountId.toEvmAddress()}`,
+    };
+    created.push(account);
+    params.onCreated?.(account);
+  }
+  return created;
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const cfg = loadConfig();
@@ -124,38 +173,23 @@ async function main(): Promise<void> {
 
   const created: GeneratedAccount[] = [];
   try {
-    for (const label of labels) {
-      const key = PrivateKey.generateECDSA();
-
-      const receipt = await (
-        await new AccountCreateTransaction()
-          // No EVM alias, so the account's address is the long-zero form of its number. That
-          // is what `evmAddress` records and what these accounts sign contract calls as.
-          .setKeyWithoutAlias(key.publicKey)
-          .setInitialBalance(new Hbar(args.hbarEach))
-          // Unlimited auto-association: lets these accounts receive HTS tokens without an
-          // explicit association step, which is what makes a USDC path viable later.
-          .setMaxAutomaticTokenAssociations(-1)
-          .execute(client)
-      ).getReceipt(client);
-
-      const accountId = receipt.accountId;
-      if (!accountId) throw new Error(`account creation for ${label} returned no accountId`);
-
-      created.push({
-        label,
-        accountId: accountId.toString(),
-        privateKey: key.toStringRaw(),
-        evmAddress: `0x${accountId.toEvmAddress()}`,
-      });
-      console.log(`  ${label.padEnd(8)} ${accountId.toString()}`);
-    }
+    await createAccounts({
+      client,
+      labels,
+      hbarEach: args.hbarEach,
+      // Persist-as-you-go: `created` is appended here rather than taken from the return value,
+      // so the `finally` below still has every account that was made when one of them throws.
+      onCreated: (account) => {
+        created.push(account);
+        console.log(`  ${account.label.padEnd(8)} ${account.accountId}`);
+      },
+    });
   } finally {
     // Persist whatever was created even if a later one failed - these accounts hold real
     // testnet funds, and losing their keys strands that balance.
     if (created.length) {
       const accounts = [...existing, ...created];
-      writeFileSync(OUT, JSON.stringify({ network: cfg.network, accounts }, null, 2) + "\n");
+      writeAccounts(accounts, cfg.network, OUT);
       console.log(
         `\nWrote ${created.length} new account(s), ${accounts.length} in total, to ${OUT}` +
           ` (gitignored - contains keys)`,
@@ -165,7 +199,12 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  console.error(`\n${(err as Error).message}\n`);
-  process.exit(1);
-});
+// Only when run directly. `createAccounts` above is imported by `demo-reset.ts`, and an
+// unguarded call here ran this file's *argument parsing* against that script's flags - which
+// failed on the first one it did not recognise, from a file the caller never invoked.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err: unknown) => {
+    console.error(`\n${(err as Error).message}\n`);
+    process.exit(1);
+  });
+}
