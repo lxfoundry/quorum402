@@ -443,7 +443,11 @@ async function sweepOne(
     return 0n;
   }
   if (entry.problem) {
-    report.bad(`${account.label.padEnd(8)} ${account.accountId} skipped: ${entry.problem}`);
+    // Reported, not failed. The survey already counted this one - before the baseline was
+    // taken, deliberately, because an account the mirror cannot answer for is something this
+    // run *found*, not something it did. Counting it again here would make a reset that
+    // behaved perfectly exit 1 for a condition it inherited.
+    report.info(`${account.label.padEnd(8)} ${account.accountId} skipped: ${entry.problem}`);
     return 0n;
   }
 
@@ -518,6 +522,8 @@ async function verify(
   cfg: Config,
   registry: PoolRegistry,
   created: GeneratedAccount[],
+  /** Whether this run was asked to stop pools that were selling. Decides what a leftover means. */
+  retiring: boolean,
 ): Promise<void> {
   const index = cfg.subgraphUrl ? new GraphClient({ url: cfg.subgraphUrl }) : undefined;
 
@@ -573,11 +579,26 @@ async function verify(
   }
 
   const shadows = await findShadows(report, cfg, registry);
-  report.expect(
-    shadows.length === 0,
-    "no pool is selling either resource - the next pool opened will be the one advertised",
-    `${shadows.length} pool(s) still selling; a pool opened now would not be advertised`,
-  );
+  if (shadows.length === 0) {
+    report.ok(
+      "no pool is selling either resource - the next pool opened will be the one advertised",
+    );
+  } else if (retiring) {
+    // Asked to stop them and they are still selling: this run did not do what it was told.
+    report.bad(
+      `${shadows.length} pool(s) still selling after --retire; a pool opened now would not be` +
+        ` advertised`,
+    );
+  } else {
+    // Not asked to stop them, so this is a fact about the world rather than a failure of the
+    // run - and the README recommends waiting a short-deadline pool out rather than paying to
+    // fill it. Exiting 1 for a state the caller declined to change would make the honest
+    // choice look like a broken reset.
+    report.info(
+      `${shadows.length} pool(s) still selling; a pool opened now would not be advertised.` +
+        ` Wait for the deadline, or re-run with --retire`,
+    );
+  }
 }
 
 // ------------------------------------------------------------------------------------- driving
@@ -736,7 +757,7 @@ async function main(): Promise<number> {
     }
 
     report.step("verifying");
-    await verify(report, cfg, registry, created);
+    await verify(report, cfg, registry, created, args.retire);
 
     const failed = report.failures - found;
     console.log(
