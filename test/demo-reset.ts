@@ -203,7 +203,8 @@ describe("reading whether a payment took a seat", () => {
     // 200 carries the licence with the receipt *nested*, so there is no top-level `counted` to
     // read - and none is needed: the coordinator answers 200 only when this payment was counted
     // and met the threshold.
-    assert.equal(tookSeat({ status: 200, body: { licence: {}, receipt: { counted: true } } }), true);
+    const filled = { licence: {}, receipt: { counted: true } };
+    assert.equal(tookSeat({ status: 200, body: filled }), true);
   });
 
   it("keeps unknown distinct from false", () => {

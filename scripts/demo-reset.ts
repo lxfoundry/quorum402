@@ -491,6 +491,28 @@ async function sweepOne(
 
 // ----------------------------------------------------------------------------- phase 5: verify
 
+/**
+ * Retry a mirror read until the account it asks about exists.
+ *
+ * Mirror ingestion lags consensus by a second or two, and this phase runs immediately after the
+ * last `AccountCreateTransaction` - so the account this run has just made can still answer 404,
+ * which `accountRecord` raises as an error. That is a read taken too early, not a verification
+ * that failed, and a script that conflated them would exit 1 on a run that did everything it
+ * was asked to.
+ */
+async function awaitAccount<T>(read: () => Promise<T>, attempts = 8): Promise<T> {
+  let last: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await read();
+    } catch (error) {
+      last = error;
+      if (attempt < attempts) await new Promise((r) => setTimeout(r, 1_500));
+    }
+  }
+  throw last as Error;
+}
+
 async function verify(
   report: Reporter,
   cfg: Config,
@@ -500,36 +522,55 @@ async function verify(
   const index = cfg.subgraphUrl ? new GraphClient({ url: cfg.subgraphUrl }) : undefined;
 
   for (const account of created) {
-    const [balance, addressOnChain] = await Promise.all([
-      balanceTinybars(cfg.mirrorUrl, account.accountId),
-      evmAddressOf(cfg.mirrorUrl, account.accountId),
-    ]);
-    report.expect(
-      addressOnChain.toLowerCase() === account.evmAddress.toLowerCase(),
-      `${account.label.padEnd(8)} ${account.accountId.padEnd(14)} holds ${hbar(balance)}, ` +
-        `address matches the network`,
-      `${account.label.padEnd(8)} ${account.accountId.padEnd(14)} recorded ` +
-        `${account.evmAddress}, network says ${addressOnChain}`,
-    );
+    // Reported rather than thrown, per account. Every read below can fail for a reason that has
+    // nothing to do with the account - a mirror node refusing, an index that is down - and by
+    // this point the accounts exist and are written to disk. Exiting here would report a reset
+    // that succeeded as a reset that failed, and leave the remaining accounts unchecked.
+    try {
+      const [balance, addressOnChain] = await awaitAccount(() =>
+        Promise.all([
+          balanceTinybars(cfg.mirrorUrl, account.accountId),
+          evmAddressOf(cfg.mirrorUrl, account.accountId),
+        ]),
+      );
+      report.expect(
+        addressOnChain.toLowerCase() === account.evmAddress.toLowerCase(),
+        `${account.label.padEnd(8)} ${account.accountId.padEnd(14)} holds ${hbar(balance)}, ` +
+          `address matches the network`,
+        `${account.label.padEnd(8)} ${account.accountId.padEnd(14)} recorded ` +
+          `${account.evmAddress}, network says ${addressOnChain}`,
+      );
 
-    if (!index || account.label.startsWith("seller")) continue;
-    // The question the demo's seat list asks, asked the same way. A fresh address answering
-    // "none" is the check: anything else means this account is not as new as it looks.
-    const { deposits } = await index.depositsFor(addressOnChain, 5);
-    report.expect(
-      deposits.length === 0,
-      `${account.label.padEnd(8)} has no deposits in the index`,
-      `${account.label.padEnd(8)} already has ${deposits.length} deposit(s) in the index`,
-    );
+      if (!index || account.label.startsWith("seller")) continue;
+      // The question the demo's seat list asks, asked the same way. A fresh address answering
+      // "none" is the check: anything else means this account is not as new as it looks.
+      const { deposits } = await index.depositsFor(addressOnChain, 5);
+      report.expect(
+        deposits.length === 0,
+        `${account.label.padEnd(8)} has no deposits in the index`,
+        `${account.label.padEnd(8)} already has ${deposits.length} deposit(s) in the index`,
+      );
+    } catch (error) {
+      report.bad(
+        `${account.label.padEnd(8)} ${account.accountId.padEnd(14)} could not be checked: ` +
+          `${(error as Error).message}`,
+      );
+    }
   }
 
-  const operator = await balanceTinybars(cfg.mirrorUrl, cfg.operatorId);
-  report.expect(
-    operator >= MIN_COORDINATOR_TINYBARS,
-    `operator  ${cfg.operatorId.padEnd(14)} holds ${hbar(operator)}`,
-    `operator  ${cfg.operatorId.padEnd(14)} holds ${hbar(operator)}, below the ` +
-      `${hbar(MIN_COORDINATOR_TINYBARS)} floor - /readyz will answer 503 coordinator-underfunded`,
-  );
+  try {
+    const operator = await balanceTinybars(cfg.mirrorUrl, cfg.operatorId);
+    report.expect(
+      operator >= MIN_COORDINATOR_TINYBARS,
+      `operator  ${cfg.operatorId.padEnd(14)} holds ${hbar(operator)}`,
+      `operator  ${cfg.operatorId.padEnd(14)} holds ${hbar(operator)}, below the ` +
+        `${hbar(MIN_COORDINATOR_TINYBARS)} floor - /readyz will answer 503 coordinator-underfunded`,
+    );
+  } catch (error) {
+    report.bad(
+      `operator  ${cfg.operatorId.padEnd(14)} balance unreadable: ${(error as Error).message}`,
+    );
+  }
 
   const shadows = await findShadows(report, cfg, registry);
   report.expect(
@@ -631,10 +672,23 @@ async function main(): Promise<number> {
     if (args.retire) {
       report.step("retiring pools that are still selling");
       for (const shadow of shadows) {
-        // Only accounts with a key here can pay, and each may take one seat per pool - the
-        // contract's `_seatTaken` sees to that, which is also why the demo needs distinct
-        // buyers in the first place.
-        await retire(report, cfg, pools, shadow, surveyed.filter((s) => !s.problem));
+        // Reported rather than thrown. `buySeat` fetches the resource URL, so this phase fails
+        // whenever the coordinator at PUBLIC_BASE_URL is not answering - not running, behind a
+        // deploy, 402 without a readable header, no `quorum` entry on offer. None of those is a
+        // reason to abandon the sweep and the fresh accounts the caller actually asked for, and
+        // a pool left selling is already the thing the report has been describing for two
+        // phases.
+        try {
+          // Only accounts with a key here can pay, and each may take one seat per pool - the
+          // contract's `_seatTaken` sees to that, which is also why the demo needs distinct
+          // buyers in the first place.
+          await retire(report, cfg, pools, shadow, surveyed.filter((s) => !s.problem));
+        } catch (error) {
+          report.bad(
+            `pool ${shadow.availability.terms.poolId} (${shadow.slug}): ` +
+              `${(error as Error).message}. Left selling`,
+          );
+        }
       }
     }
 
