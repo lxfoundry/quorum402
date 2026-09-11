@@ -666,12 +666,34 @@ reasoning, and the evidence behind it, is [ADR 0001](adr/0001-what-quorum-binds-
 `transaction`, `network` and `payer`, and **no signature**, while the client does receive it. So a
 payer already holds a statement that their payment settled, and no contract can act on it, because
 nothing authenticates it. If a facilitator signed `(payer, asset, amount, payTo, transactionId)`
-with a published key, a payer could present that to the hold directly and **the coordinator would
-leave the refund path entirely** — the first limitation above would be gone, not mitigated.
+with a published key, a payer could present that to the hold directly, and **the coordinator would
+leave the refund path entirely**.
 
 This is a question for x402 rather than for this project, and it is one `conditional` raises by
 existing: **a flow that promises reversal owes the payer a way to prove the commitment without the
 cooperation of the party who might have failed them.**
+
+It is also live upstream, and further along than this project needs it to be.
+[x402-foundation/x402#1802](https://github.com/x402-foundation/x402/issues/1802) proposes that
+object — a facilitator-signed `SettlementAttestation`, EIP-712, kept deliberately distinct from the
+merged server-signed offer-and-receipt extension — and has been open since 2026-03-26 pending an
+architecture decision. **It is not this project's proposal.** What this project contributed is
+the [non-EVM half](https://github.com/x402-foundation/x402/issues/1802#issuecomment-5634778943),
+which was surfaced by building on a native-transfer binding:
+
+- **`SettlementResponse.payer` is not portable across bindings.** On Hedera it is the fee payer,
+  which is the facilitator (§7 rule 5) — so an attestation that copies that field names the wrong
+  party: well-formed every time, and wrong every time. What gets signed has to be defined per
+  binding as the account whose funds actually moved.
+- **There is no EIP-3009 `paymentId` to bind to** where `exact` settles a native transfer. If the
+  payload requires one, non-EVM bindings cannot produce a conformant attestation at all;
+  `(network, transaction)` is the pair that travels.
+- **It moves the trust rather than removing it.** A facilitator willing to sign a false attestation
+  could make a hold credit a deposit that never arrived. So the rule a hold needs is that an
+  attestation **attributes value the contract can already see arrived, and never asserts that it
+  arrived** — under which §11's property survives unchanged, a deposit can still be omitted but
+  never invented, and the coordinator leaves the refund path with the residual failure bounded
+  rather than eliminated.
 
 **2. Intent before payment.** A payer could register an intent to join before paying, so the hold
 knows whom to expect. Intent alone is not sufficient: a party who never paid could claim against
@@ -709,6 +731,13 @@ Read on **2026-09-08** from `x402-foundation/x402` at `main`:
 | `specs/schemes/exact/scheme_exact.md` | `upfront`'s no-refund statement; asset transfer method families |
 | `specs/schemes/exact/scheme_exact_hedera.md` | The Hedera binding: payload shape, `SettlementResponse.payer` as the fee payer, facilitator verification rules |
 | `specs/schemes/` | That the defined schemes are `exact`, `upto`, `batch-settlement` and `auth-capture` |
+
+Read on **2026-09-11**, same repository at `main`:
+
+| Source | Used for |
+|---|---|
+| `specs/extensions/extension-offer-and-receipt.md` | That server-signed offers and receipts are already merged and EIP-712, and are scoped to delivery rather than to settlement — §12 question 1 |
+| [issue #1802](https://github.com/x402-foundation/x402/issues/1802) | The open facilitator-signed `SettlementAttestation` proposal: its converged shape, and the architecture decision it waits on — §12 question 1 |
 
 Project decisions this document rests on: [ADR 0001](adr/0001-what-quorum-binds-to.md),
 [ADR 0002](adr/0002-payment-attribution-on-hedera.md),
