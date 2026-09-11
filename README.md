@@ -744,12 +744,14 @@ not `--yes` is passed. That is also why the survey and the work are one command 
 npm run demo:reset                       # what it would do
 npm run demo:reset -- --yes              # do it
 npm run demo:reset -- --yes --retire     # and stop any pool that is still selling
+npm run demo:reset -- --yes --buyers 3 --hbar-each 25    # a different cast, funded differently
 ```
 
 It sweeps the accounts in `.accounts.json` into the operator, supersedes that file, makes
 `buyer1..buyer4` and `seller` with equal balances, and then checks its own work: that each new
-address is the one the network holds, that the index reports no deposits against it, and that no
-pool would be advertised ahead of the next one opened.
+address is the one the network holds, and that the index reports no deposits against it. It
+finishes by saying whether any pool would still be advertised ahead of the next one opened —
+which counts as a failure only if `--retire` was asked for and did not manage it.
 
 Three things it is careful about, each for a reason that cost something to learn:
 
@@ -766,9 +768,18 @@ Three things it is careful about, each for a reason that cost something to learn
   fill it to its threshold and release it, at the seat price per remaining seat. A pool with a
   short deadline is better waited out.
 
+  It buys those seats the way any buyer would — over HTTP, against the 402 — so it needs a
+  coordinator answering at `PUBLIC_BASE_URL`. Without one it reports the pools it could not
+  retire and gets on with the sweep. It also skips any account that already holds a seat in the
+  pool: a second payment from the same address is not refused, it settles as a *late* deposit
+  that takes no seat, so paying one would cost a seat price and leave the pool selling.
+
 `--also-sweep <path>` recycles another working copy's accounts file in the same run, and archives
-it in place once its accounts are empty — so a second checkout cannot go on using accounts that
-have been drained.
+it in place afterwards — so a second checkout cannot go on using accounts this run has drained.
+An account that could not be swept is named at the end, with the command that reaches it: its key
+is in the archive by then, which a plain re-run does not look at.
+
+The other two flags are `--buyers <n>` (default 4, up to 10) and `--hbar-each <n>` (default 10).
 
 ## Verifying it end to end
 
