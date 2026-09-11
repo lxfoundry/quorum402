@@ -469,16 +469,23 @@ async function sweepOne(
 ): Promise<{ swept: bigint; unswept: boolean }> {
   const nothing = { swept: 0n, unswept: false };
   const { account } = entry;
-  if (account.accountId === cfg.operatorId) {
-    report.info(`${account.label.padEnd(8)} ${account.accountId} is the operator - skipped`);
+  // Before the operator check, because that one parses the id and this is the case where the
+  // id may be unparseable - an account the survey could not read is one to leave alone either
+  // way, and saying why is more use than saying which account it is not.
+  //
+  // Reported, not failed. The survey already counted this one - before the baseline was taken,
+  // deliberately, because an account the mirror cannot answer for is something this run
+  // *found*, not something it did. Counting it again here would make a reset that behaved
+  // perfectly exit 1 for a condition it inherited.
+  if (entry.problem) {
+    report.info(`${account.label.padEnd(8)} ${account.accountId} skipped: ${entry.problem}`);
     return nothing;
   }
-  if (entry.problem) {
-    // Reported, not failed. The survey already counted this one - before the baseline was
-    // taken, deliberately, because an account the mirror cannot answer for is something this
-    // run *found*, not something it did. Counting it again here would make a reset that
-    // behaved perfectly exit 1 for a condition it inherited.
-    report.info(`${account.label.padEnd(8)} ${account.accountId} skipped: ${entry.problem}`);
+  // Compared as ids rather than as strings. `0.0.1234` and `0.0.1234-vfmkw` name the same
+  // account - the second carries Hedera's checksum - and a string compare would miss it, then
+  // have the operator sign a transfer from itself to itself. Harmless, and paid for.
+  if (AccountId.fromString(account.accountId).toString() === operator.toString()) {
+    report.info(`${account.label.padEnd(8)} ${account.accountId} is the operator - skipped`);
     return nothing;
   }
 
