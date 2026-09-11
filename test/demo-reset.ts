@@ -12,6 +12,7 @@
  * here rather than trusted.
  */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -20,9 +21,29 @@ import { archiveAccounts, readAccountsFile, writeAccounts } from "../scripts/acc
 import { labelsFor, parseArgs, tookSeat } from "../scripts/demo-reset.js";
 import type { GeneratedAccount } from "../scripts/create-accounts.js";
 
-/** The patterns `.gitignore` uses for these files. An archive has to match one of them. */
+const REPO_ROOT = join(import.meta.dirname, "..");
+
+/**
+ * Whether git would ignore a file of this name at the repository root.
+ *
+ * Asked of git rather than restated here, because a copy of the patterns is a copy that stops
+ * agreeing with `.gitignore` the moment anyone edits it - and would go on passing while doing
+ * so, which is the one way this test could be worse than no test. `check-ignore` works on
+ * pathnames rather than files, so nothing has to exist for it to answer.
+ */
 function gitignored(filename: string): boolean {
-  return filename === ".accounts.json" || filename.endsWith(".accounts.json");
+  const result = spawnSync("git", ["check-ignore", "--quiet", "--no-index", "--", filename], {
+    cwd: REPO_ROOT,
+  });
+  // 0 ignored, 1 not ignored, anything else is git failing to answer - which must not read as
+  // "not ignored", and must not read as ignored either.
+  if (result.status !== 0 && result.status !== 1) {
+    throw new Error(
+      `git check-ignore could not answer for ${filename}: ` +
+        `${result.error?.message ?? result.stderr?.toString() ?? `status ${String(result.status)}`}`,
+    );
+  }
+  return result.status === 0;
 }
 
 const ACCOUNT: GeneratedAccount = {
@@ -42,6 +63,13 @@ function inTempDir(body: (dir: string) => void): void {
 }
 
 describe("superseding an accounts file", () => {
+  it("asks a question that can come out either way", () => {
+    // A guard on the guard. A `gitignored` that answered true to everything - git missing, a
+    // wrong working directory - would make every assertion below vacuous while still passing.
+    assert.equal(gitignored(".accounts.json"), true, "the live file must be ignored");
+    assert.equal(gitignored("README.md"), false, "a tracked file must not read as ignored");
+  });
+
   it("renames it to something .gitignore already covers", () => {
     inTempDir((dir) => {
       const path = join(dir, ".accounts.json");
