@@ -18,6 +18,7 @@
     "lint:sol": "solhint --max-warnings 0 \"contracts/**/*.sol\"",
     "lint:ts": "eslint . --max-warnings 0",
     "accounts:create": "tsx scripts/create-accounts.ts",
+    "demo:reset": "tsx scripts/demo-reset.ts",
     "check:env": "tsx scripts/check-env.ts",
     "check:payto": "tsx scripts/check-contract-payto.ts",
     "deploy": "tsx scripts/deploy.ts",
