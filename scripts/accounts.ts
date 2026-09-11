@@ -69,9 +69,16 @@ export function writeAccounts(
  *
  * Returns the archive's path, or `undefined` when there was no file to move.
  */
-export function archiveAccounts(path: string = ACCOUNTS_FILE): string | undefined {
+export function archiveAccounts(
+  path: string = ACCOUNTS_FILE,
+  // Injectable for the same reason `PoolRegistry` takes one: the behaviour that matters here is
+  // what happens when two archives land in the same second, and a test that waits for a real
+  // clock to produce that is a test that passes whenever it happens not to.
+  options: { now?: () => Date } = {},
+): string | undefined {
   if (!existsSync(path)) return undefined;
-  const stamp = new Date().toISOString().replace(/\.\d+Z$/, "Z").replace(/:/g, "-");
+  const now = options.now ?? (() => new Date());
+  const stamp = now().toISOString().replace(/\.\d+Z$/, "Z").replace(/:/g, "-");
   const directory = dirname(path);
 
   // Second-resolution timestamps collide, and `renameSync` overwrites without a word - so two

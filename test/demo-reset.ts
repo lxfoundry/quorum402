@@ -72,19 +72,28 @@ describe("superseding an accounts file", () => {
 
   it("does not collide with an archive already beside it", () => {
     inTempDir((dir) => {
+      // Frozen, so both archives genuinely share a second. Left to the real clock this passes
+      // whenever the two calls happen to straddle a boundary, which is most of the time - a
+      // test for same-second collisions that only sometimes produces one proves nothing.
+      const sameSecond = { now: () => new Date("2026-09-11T08:16:51.000Z") };
       const path = join(dir, ".accounts.json");
+
       writeAccounts([ACCOUNT], "testnet", path);
-      const first = archiveAccounts(path);
+      const first = archiveAccounts(path, sameSecond);
       assert.ok(first);
 
       // A second reset in the same second must not overwrite the first archive - that would
       // delete keys by the very act meant to preserve them.
       writeAccounts([{ ...ACCOUNT, accountId: "0.0.5678" }], "testnet", path);
-      const second = archiveAccounts(path);
+      const second = archiveAccounts(path, sameSecond);
 
       assert.ok(second);
       assert.notEqual(first, second);
       assert.deepEqual(readAccountsFile(first).accounts, [ACCOUNT]);
+      assert.deepEqual(readAccountsFile(second).accounts, [
+        { ...ACCOUNT, accountId: "0.0.5678" },
+      ]);
+      assert.ok(gitignored(basename(second)), "the disambiguated name must stay ignored too");
     });
   });
 
