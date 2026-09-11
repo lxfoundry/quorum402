@@ -418,6 +418,33 @@ async function retire(
   report.ok(
     `pool ${terms.poolId} released to ${terms.recipient} - ${released.transactionId}`,
   );
+
+  // The recipient of a demo's leftover pool is usually one of the accounts this run is about to
+  // sweep - its own seller. `release` pays at consensus, but the sweep reads the *mirror*, which
+  // lags by a second or two: without this the sweep builds its transfer from the pre-release
+  // figure and leaves the payout sitting in an account archived a phase later. Recoverable from
+  // the archive, but not what "the whole balance moves" promises.
+  //
+  // The wait is the fix, not the figure - `sweepOne` takes its own reading, and by the time this
+  // returns the mirror has caught up. A payout the contract could not deliver is credited
+  // instead, in which case this times out and hands back what the mirror says, which is still
+  // the right amount to sweep.
+  const paid = candidates.find(
+    (c) => c.addressOnChain?.toLowerCase() === terms.recipient.toLowerCase(),
+  );
+  if (paid) {
+    paid.balanceTinybars = await awaitBalance(
+      cfg.mirrorUrl,
+      paid.account.accountId,
+      // Met means every seat is taken, and `release` pays the seats at the unit price - late
+      // deposits are not paid out, they stay refundable to whoever sent them.
+      paid.balanceTinybars + terms.unitTinybars * BigInt(terms.threshold),
+    );
+    report.info(
+      `${paid.account.label.padEnd(8)} ${paid.account.accountId.padEnd(14)} holds ` +
+        `${hbar(paid.balanceTinybars)} after the payout`,
+    );
+  }
 }
 
 // ------------------------------------------------------------------------------ phase 3: sweep
