@@ -28,6 +28,7 @@
  * 🔴 Reads private keys out of `.accounts.json`. Same rule as the rest of this directory: no
  * key is printed, and none reaches anything that is not about to sign with it.
  */
+import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import {
   AccountId,
@@ -159,16 +160,21 @@ function sourcesOf(args: Args): Array<{ path: string; accounts: GeneratedAccount
   const paths = [ACCOUNTS_FILE, ...args.alsoSweep];
   const sources: Array<{ path: string; accounts: GeneratedAccount[] }> = [];
   for (const path of paths) {
+    // The primary file being *absent* is the ordinary first-run case, not a failure: there is
+    // simply nothing to recycle, and phase 4 still has accounts to make. Tested for here rather
+    // than caught below, because absent is the only reason to carry on. A file that is present
+    // and unreadable - truncated, hand-edited, half-written by an interrupted run - is a
+    // different thing entirely, and swallowing it would survey as "nothing to recycle", sweep
+    // funded accounts not at all, and supersede the file anyway. Silently.
+    if (path === ACCOUNTS_FILE && !existsSync(path)) continue;
     try {
       // Read by path rather than through `loadAccounts`, which would refuse a file written
       // against another network. A file like that still names accounts holding a balance, and
       // whether they can be *used* is a different question from whether they can be emptied.
       sources.push({ path, accounts: readAccountsFile(path).accounts });
     } catch (error) {
-      // The primary file being absent is the ordinary first-run case, not a failure: there is
-      // simply nothing to recycle, and phase 4 still has accounts to make.
-      if (path === ACCOUNTS_FILE) continue;
-      throw new Error(`--also-sweep ${path}: ${(error as Error).message}`);
+      const where = path === ACCOUNTS_FILE ? path : `--also-sweep ${path}`;
+      throw new Error(`${where}: ${(error as Error).message}`);
     }
   }
   return sources;

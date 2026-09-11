@@ -12,7 +12,7 @@
  * here rather than trusted.
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { describe, it } from "node:test";
@@ -118,6 +118,27 @@ describe("superseding an accounts file", () => {
     inTempDir((dir) => {
       // An empty list would read as "nothing to recycle" and sweep nothing, silently.
       assert.throws(() => readAccountsFile(join(dir, "absent.accounts.json")), /not found/);
+    });
+  });
+
+  it("refuses a file that is valid JSON but not an accounts file", () => {
+    inTempDir((dir) => {
+      // `{}` yields an `accounts` of `undefined`, which fails a phase later as "accounts is
+      // not iterable" and names no file - reported to a caller deciding what to sweep.
+      const path = join(dir, ".accounts.json");
+      writeFileSync(path, '{"network":"testnet"}\n');
+      assert.throws(() => readAccountsFile(path), /no accounts array/);
+    });
+  });
+
+  it("names the file when its contents are not JSON at all", () => {
+    inTempDir((dir) => {
+      // A truncated or half-written file is the realistic case: an interrupted run, or an
+      // editor that saved over it. `JSON.parse` says what is wrong with the text and nothing
+      // about where the text came from.
+      const path = join(dir, ".accounts.json");
+      writeFileSync(path, '{"accounts":[{"label":"buyer1"');
+      assert.throws(() => readAccountsFile(path), /\.accounts\.json is not readable JSON/);
     });
   });
 });

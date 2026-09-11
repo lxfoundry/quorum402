@@ -26,7 +26,23 @@ export interface AccountsFile {
  */
 export function readAccountsFile(path: string): AccountsFile {
   if (!existsSync(path)) throw new Error(`${path} not found`);
-  return JSON.parse(readFileSync(path, "utf8")) as AccountsFile;
+
+  let parsed: Partial<AccountsFile>;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<AccountsFile>;
+  } catch (error) {
+    // Named here rather than left to the caller, because `JSON.parse` says what is wrong with
+    // the text and nothing about which file it came from - and the callers that matter are
+    // holding two or three paths at once.
+    throw new Error(`${path} is not readable JSON: ${(error as Error).message}`);
+  }
+  // Valid JSON is not the same as an accounts file. Without this, `{}` hands back an `accounts`
+  // of `undefined` and the failure surfaces a phase later as "accounts is not iterable", naming
+  // no file - reported to someone who is about to decide whether there is anything to sweep.
+  if (!Array.isArray(parsed.accounts)) {
+    throw new Error(`${path} has no accounts array - it is not an accounts file`);
+  }
+  return parsed as AccountsFile;
 }
 
 export function loadAccounts(expectedNetwork: string): GeneratedAccount[] {
