@@ -733,8 +733,12 @@ A demo run leaves things behind, and they are not all the same kind of thing:
 | A pool that never filled, still selling | the contract, keyed by **resource URL** | filling it, or its deadline |
 | Log, seat memory, caches | the demo process | restarting it |
 
-`npm run demo:reset` does the first three. It is safe to read first — with no flags it surveys,
-reports, and signs nothing:
+`npm run demo:reset` does the first three. It is safe to read first — with no flags it surveys and
+reports, and **changes nothing**: no account swept, created or emptied, no pool filled. It is not
+free, though, and the distinction matters if you are watching the operator's balance. Finding which
+pools name this coordinator's resource URLs means reading every pool off the contract, and a
+contract view call is a paid query — so expect a few HBAR of query fees per invocation, whether or
+not `--yes` is passed. That is also why the survey and the work are one command rather than two.
 
 ```bash
 npm run demo:reset                       # what it would do
@@ -765,10 +769,6 @@ Three things it is careful about, each for a reason that cost something to learn
 `--also-sweep <path>` recycles another working copy's accounts file in the same run, and archives
 it in place once its accounts are empty — so a second checkout cannot go on using accounts that
 have been drained.
-
-One cost worth knowing: each invocation reads every pool on the contract to find which of them
-name the resource URLs this coordinator sells, and contract view calls are not free. Expect a few
-HBAR per run, which is why the survey and the work are one command and not two.
 
 ## Verifying it end to end
 
