@@ -677,9 +677,9 @@ It is also live upstream, and further along than this project needs it to be.
 [x402-foundation/x402#1802](https://github.com/x402-foundation/x402/issues/1802) proposes that
 object — a facilitator-signed `SettlementAttestation`, EIP-712, kept deliberately distinct from the
 merged server-signed offer-and-receipt extension — and has been open since 2026-03-26 pending an
-architecture decision. **It is not this project's proposal.** What this project contributed to it is
+architecture decision. **It is not this project's proposal.** What this project contributed is
 the [non-EVM half](https://github.com/x402-foundation/x402/issues/1802#issuecomment-5634778943),
-which building on a native-transfer binding is what surfaced:
+which was surfaced by building on a native-transfer binding:
 
 - **`SettlementResponse.payer` is not portable across bindings.** On Hedera it is the fee payer,
   which is the facilitator (§7 rule 5) — so an attestation that copies that field names the wrong
