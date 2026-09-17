@@ -13,6 +13,16 @@ Built from scratch for [ETHOnline 2026](https://ethglobal.com/events/ethonline20
 > 🚧 Status: in active development. Anything marked `TODO` below is a placeholder, not a claim
 > that something works.
 
+> ⚠️ **The hosted services have been shut down.** The coordinator and the subgraph that ran on
+> Fly.io (`quorum402-coordinator.fly.dev`, `quorum402-subgraph.fly.dev`) no longer answer. Where
+> this page says a service is live, or gives a link or a `curl` to try, it describes them before
+> the shutdown. The outputs under
+> [The same seven steps, actually run](#the-same-seven-steps-actually-run) are still what came
+> back on 2026-09-10. The contract is not affected: it stays on Hedera testnet at `0.0.10409980`.
+> To run everything locally, including redemption, start the subgraph as
+> [subgraph/README.md](subgraph/README.md) describes and set `SUBGRAPH_URL` to
+> `http://localhost:8000/subgraphs/name/quorum402`.
+
 ---
 
 ## The gap this fills
