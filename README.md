@@ -25,10 +25,54 @@ Built from scratch for [ETHOnline 2026](https://ethglobal.com/events/ethonline20
 
 ---
 
-## The gap this fills
+## Demo
 
-[x402](https://x402.org) turns HTTP `402 Payment Required` into a real payment handshake.
-As of 2026-09-08 its schemes all describe one payer settling one request:
+[![Watch the quorum402 demo](docs/images/video.png)](https://youtu.be/cjZoOaXqrjc)
+
+**[Watch it on YouTube](https://youtu.be/cjZoOaXqrjc)** — 3 minutes 40, one pool of three seats
+on Hedera testnet, run end to end.
+
+The `402` that carries `quorum`; two buyers who pay and are answered `202 Accepted` because the
+crowd is still short; the third, whose payment completes it and is answered `200` with the
+resource; an earlier buyer redeeming their `202` afterwards with nothing but a signature from
+the account that paid; and a second pool that never fills, refunded to its payer by their own
+key.
+
+---
+
+## What is quorum402
+
+`quorum402` proposes a new x402 scheme, named `quorum`, for a resource that no single buyer can
+unlock alone.
+
+A seller opens a pool over a resource, on-chain: the URL it sells, a seat price, how many
+distinct buyers it needs, and a deadline. A buyer who asks for that resource is answered `402
+Payment Required` carrying the pool's terms, pays the pool contract rather than the seller, and
+is told which of two things happened — `202 Accepted` while the crowd is still short, or `200`
+with the resource when that payment is the one that completes it. A `202` becomes the resource
+as soon as the crowd arrives: the buyer redeems it by signing with the account that paid, and
+the coordinator has remembered nothing on their behalf.
+
+![A buyer is answered 202 Accepted: a seat taken, the resource still owed](docs/images/202-accepted.png)
+
+*The first buyer pays and is answered `202 Accepted` — seat 1 of 3, resource still owed. From
+the run recorded on Hedera testnet, 12 Sep 2026.*
+
+If the deadline passes with the pool short, nobody keeps anything. A payer calls `claimRefund`
+with their own key and needs nobody's permission; a payer who cannot afford the gas has
+`refundAll` push it to them. The money is never with the seller — it sits in the pool contract's
+own account on Hedera testnet, and the contract is ownerless, with no admin, pause or upgrade
+key ([ADR 0003](specs/adr/0003-pool-authority-model.md)), so all-or-nothing is a property of the
+contract rather than a promise.
+
+![A payer claims their refund from the contract with their own account](docs/images/refund-claimed.png)
+
+*A pool that fell one seat short: the payer calls `claimRefund` from their own account and the
+ℏ comes back. The coordinator is not involved, and cannot be.*
+
+**Why this needs a scheme of its own.** [x402](https://x402.org) turns HTTP `402 Payment
+Required` into a real payment handshake. As of 2026-09-08 its schemes all describe one payer
+settling one request:
 
 | Scheme | Semantics |
 |---|---|
@@ -44,8 +88,8 @@ choice, not a fact about who else turned up.
 [The scheme spec §1](specs/quorum-scheme.md#1-what-x402-does-not-express-as-of-2026-09-08) makes
 that comparison precisely.
 
-`quorum402` proposes that missing shape as a scheme named `quorum`. What is built of it is
-stated per hold binding in [§10](specs/quorum-scheme.md#10-hold-bindings).
+What is built of the scheme is stated per hold binding in
+[§10](specs/quorum-scheme.md#10-hold-bindings).
 
 The same mechanism covers minimum-participant offers (a trip that runs at 20 travellers),
 tiered group buying (the price falls as the pool fills), and all-or-nothing crowdfunding.
@@ -862,12 +906,6 @@ licence proves the resource served belongs to *this* pool, and the latecomer's 4
 pool is selling this" rather than "some older pool answered instead". The rest of the isolation
 is a design property rather than a measured one: concurrent runs should not interfere, and a run
 that dies should leave behind only a pool that expires into refundable. Neither has been tested.
-
-## Demo
-
-TODO: video link.
-
----
 
 ## Repository layout
 
